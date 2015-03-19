@@ -55,14 +55,14 @@ class CryptoPad(Tk):
     def __init__ (p):
         Tk.__init__(p)
         p.title(s_NewDoc+s_Title)
-        p.textPad = ScrolledText(p, width=100, height=30)
+        p.textPad = ScrolledText(p, width=100, height=30, wrap=WORD)
         p.PCPfile = None
         p.password = None
         
-        menu = Menu(p)
+        menu = Menu(p, tearoff=0)
         p.config(menu=menu)
         
-        filemenu = Menu(menu)
+        filemenu = Menu(menu, tearoff=0)
         menu.add_cascade(label=s_MenuFile, menu=filemenu)
         filemenu.add_command(label=s_MenuFileNew, command=p.new_command)
         filemenu.add_command(label=s_MenuFileOpen, command=p.open_command)
@@ -71,17 +71,17 @@ class CryptoPad(Tk):
         filemenu.add_separator()
         filemenu.add_command(label=s_MenuFileQuit, command=p.exit_command)
 
-        editmenu = Menu(menu)
+        editmenu = Menu(menu, tearoff=0)
         menu.add_cascade(label=s_MenuEdit, menu=editmenu)
         editmenu.add_command(label=s_MenuEditCut, command=p.cut_command)
         editmenu.add_command(label=s_MenuEditCopy, command=p.copy_command)
         editmenu.add_command(label=s_MenuEditPaste, command=p.paste_command)
         
-        helpmenu = Menu(menu)
+        helpmenu = Menu(menu, tearoff=0)
         menu.add_cascade(label=s_MenuHelp, menu=helpmenu)
         helpmenu.add_command(label=s_MenuHelpAbout, command=p.about_command)
         
-        p.textPad.pack()
+        p.textPad.pack(fill=BOTH, expand=YES)
         
         p.wm_protocol ("WM_DELETE_WINDOW", p.exit_command)
         
@@ -95,19 +95,19 @@ class CryptoPad(Tk):
             zip = MiniZipAE1Reader(p.PCPfile, p.password)
             s = zip.get()
             p.textPad.insert('1.0', s)
+            p.title(os.path.basename(p.PCPfile.name)[:-5] + s_Title)
             p.textPad.edit_modified(False)
 
     def save_command(p):
         if p.PCPfile == None:
             p.saveas_command()
         s = p.textPad.get('1.0', END+'-1c')
-        # Comprime e cifra, eventualmente riutilizzando il file aperto
         p.PCPfile.seek(0,0)
         zip = MiniZipAE1Writer(p.PCPfile, p.password)
         zip.append(os.path.basename(p.PCPfile.name).replace('.etxt','.txt'), s)
         zip.zipcomment = 'CryptoPad 0.1 Document'
         zip.write()
-        p.title(os.path.basename(p.PCPfile.name) + s_Title)
+        p.title(os.path.basename(p.PCPfile.name)[:-5] + s_Title)
         p.textPad.edit_modified(False)
 
     def saveas_command(p):
