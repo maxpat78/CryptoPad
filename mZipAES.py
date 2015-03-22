@@ -1,15 +1,126 @@
 # A micro reader & writer for AES-256 encrypted ZIP archives
-# Based on Python 2.7 and pycrypto
+# Based on Python 2.7 and pycrypto / openssl's libeay
 import zlib, struct, time
+
+# 0=Nessuno, 1=pycrypto, 2=libeay
+CRYPTO_KIT = 0
 
 try:
     from Crypto.Cipher import AES
     from Crypto.Hash import HMAC, SHA
     from Crypto.Protocol.KDF import PBKDF2
     from Crypto import Random, Util
+    
+    CRYPTO_KIT = 1
 except:
-    print "missing required package: pycrypto 2.6"
+    pass
 
+if not CRYPTO_KIT:
+    try:
+        from ctypes import *
+        libeay = CDLL('libeay32')
+        CRYPTO_KIT = 2
+
+        # Nel modo CTR il cifrato risulta dallo XOR tra ciascun blocco di testo in chiaro e un contatore cifrato in modo ECB
+        # realizzato, preferibilmente, mediante unione di n bit casuali con n bit di contatore.
+        # I protocolli AE-1 e AE-2 di WinZip richiedono che il contatore sia un numero a 128 bit codificato in Little Endian
+        # diversamente dalle maggiori implementazioni in Big Endian; inoltre il contatore parte da 1 senza
+        # alcun contenuto casuale.
+        # NOTA: la versione C e' veloce quanto quella pycrypto
+        def AES_ctr128_le_crypt(key, s):
+            if not s: return ''
+            # La chiave deve avere 128, 192 o 256 bit
+            if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
+            AES_KEY = create_string_buffer(244)
+            assert libeay.AES_set_encrypt_key(key, len(key)*8, AES_KEY) == 0
+            ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
+            # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
+            # Possiamo usare tranquillamente solo la prima DWORD come contatore
+            ptr = cast(ctr_counter_le, POINTER(c_ulong))
+            es = ''
+            i = 1 # il contatore parte da 1
+            for i in range(i, (len(s)/16)+1):
+                j = (i-1)*16
+                ptr.contents.value += 1
+                # Cifra il valore corrente del contatore
+                libeay.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
+                # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
+                # 72x slower than pycrypto
+                for k in range(16):
+                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[j+k]))
+                # 88x slower than pycrypto
+                #~ for k in range(0, 16, 8):
+                    #~ a = cast(ctr_encrypted_counter.raw[k:k+8], POINTER(c_ulonglong)).contents.value
+                    #~ b = cast(s[j+k:j+k+8], POINTER(c_ulonglong)).contents.value
+                    #~ es += string_at(byref(c_ulonglong(a^b)),8)
+            # Elabora il blocco parziale eventualmente residuato
+            j = len(s)%16
+            if j:
+                #~ ctr_counter_le[0:4] = string_at(byref(c_uint(i+1)), 4)
+                ptr.contents.value += 1
+                libeay.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
+                for k in range(j):
+                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
+            return es
+
+        # Se presente, sostituisce con la versione C
+        import _libeay
+        AES_ctr128LE_crypt = _libeay.AES_ctr128LE_crypt
+    except:
+        pass
+
+if not CRYPTO_KIT:
+    raise Exception("CRYPTO KIT ABSENT")
+    
+if CRYPTO_KIT == 1:
+    def AE_gen_salt():
+        "Genera 128 bit casuali di salt per AES-256"
+        return Random.get_random_bytes(16)
+
+    def AE_derive_256bit_keys(password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi a 256 bit per AES \
+        e HMAC-SHA1-80, e i 16 bit di controllo"
+        s = PBKDF2(password, salt, 66)
+        return s[:32], s[32:64], s[64:]
+
+    def AE_ctr_crypt(key, s):
+        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
+        enc = AES.new(key, AES.MODE_CTR, counter=Util.Counter.new(128, little_endian=True))
+        return enc.encrypt(s)
+
+    def AE_hmac_sha1_80(key, s):
+        "Autentica con HMAC-SHA1-80 e chiave a 256 bit"
+        hmac = HMAC.new(key, digestmod=SHA)
+        hmac.update(s)
+        return hmac.digest()[:10]
+        
+elif CRYPTO_KIT == 2:
+    
+    def AE_gen_salt():
+        "Genera 128 bit casuali di salt per AES-256"
+        key = create_string_buffer(16)
+        libeay.RAND_poll()
+        libeay.RAND_screen()
+        if not libeay.RAND_bytes(key, 16):
+            libeay.RAND_pseudo_bytes(key, 16)
+        return key.raw
+
+    def AE_derive_256bit_keys(password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi a 256 bit per AES \
+        e HMAC-SHA1-80, e i 16 bit di controllo"
+        s = create_string_buffer(66)
+        libeay.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 66, s)
+        return s.raw[:32], s.raw[32:64], s.raw[64:]
+
+    def AE_ctr_crypt(key, s):
+        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
+        return AES_ctr128_le_crypt(key, s)
+
+    def AE_hmac_sha1_80(key, s):
+        "Autentica con HMAC-SHA1-80 e chiave a 256 bit"
+        digest = libeay.HMAC(libeay.EVP_sha1(), key, len(key), s, len(s), 0, 0);    
+        return string_at(digest)[:10]
+    
 #~ Local file header:
 
     #~ local file header signature     4 bytes  (0x04034b50)
@@ -93,16 +204,8 @@ class MiniZipAE1Writer():
         p.fp = stream
         # Avvia il compressore Deflate "raw" tramite zlib
         p.compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
-        # Genera un salt casuale a 128-bit (16 byte) per AES-256
-        p.salt = Random.get_random_bytes(16)
-        # Genera una chiave a 256-bit per AES, un'altra per HMAC-SHA1-80 e 2 byte di controllo
-        blob = PBKDF2(password, p.salt, 66)
-        # Avvia la cifra AES con chiave a 256-bit in modo CTR *LITTLE-ENDIAN*
-        p.encryptor = AES.new(blob[:32], AES.MODE_CTR, counter=Util.Counter.new(128, little_endian=True))
-        # Avvia HMAC-SHA1-80
-        p.hmac = HMAC.new(blob[32:64], digestmod=SHA)
-        # WORD di verifica password
-        p.chkword = blob[64:]
+        p.salt = AE_gen_salt()
+        p.aes_key, p.hmac_key, p.chkword = AE_derive_256bit_keys(password, p.salt)
 
     def append(p, entry, s):
         # Nome del file da aggiungere
@@ -111,18 +214,16 @@ class MiniZipAE1Writer():
         p.crc32 = zlib.crc32(s) & 0xFFFFFFFF
         # Comprime, cifra e calcola l'hash sul cifrato
         cs = p.compressor.compress(s) + p.compressor.flush()
-        # csize = dati + salt (16) + chkword (2) + HMAC (10)
+        # csize = salt (16) + chkword (2) + len(s) + HMAC (10)
         p.usize, p.csize = len(s), len(cs)+28
-        p.blob = p.encryptor.encrypt(cs)
-        p.hmac.update(p.blob)
+        p.blob = AE_ctr_crypt(p.aes_key, cs)
 
     def write(p):
         p.fp.write(p.PK0304())
         p.fp.write(p.salt)
         p.fp.write(p.chkword)
         p.fp.write(p.blob)
-        # HMAC-SHA1-80 usa solo 80 dei 160 bit generati per l'hash
-        p.fp.write(p.hmac.digest()[:10])
+        p.fp.write(AE_hmac_sha1_80(p.hmac_key, p.blob))
         cdir = p.PK0102()
         cdirpos = p.fp.tell()
         p.fp.write(cdir)
@@ -163,16 +264,12 @@ class MiniZipAE1Reader():
         # Avvia il decompressore Deflate via zlib
         p.decompressor = zlib.decompressobj(-15)
         p.parse()
-        # Rigenera una chiave a 256-bit per AES, un'altra per HMAC-SHA1-80 e 2 byte di controllo
-        blob = PBKDF2(password, p.salt, 66)
-        if p.chkword != blob[64:]:
+        aes_key, hmac_key, chkword = AE_derive_256bit_keys(password, p.salt)
+        if p.chkword != chkword:
             raise Exception("BAD PASSWORD")
-        p.decryptor = AES.new(blob[:32], AES.MODE_CTR, counter=Util.Counter.new(128, little_endian=True))
-        p.hmac = HMAC.new(blob[32:64], digestmod=SHA)
-        p.hmac.update(p.blob)
-        if p.hmac.digest()[:10] != p.digest:
+        if p.digest != AE_hmac_sha1_80(hmac_key, p.blob):
             raise Exception("BAD HMAC-SHA1-80")
-        cs = p.decryptor.decrypt(p.blob)
+        cs = AE_ctr_crypt(aes_key, p.blob)
         p.s = p.decompressor.decompress(cs)
         crc32 = zlib.crc32(p.s) & 0xFFFFFFFF
         if crc32 != p.crc32:
@@ -211,10 +308,14 @@ class MiniZipAE1Reader():
 
 
 if __name__ == '__main__':
-    zip = MiniZipAE1Writer(file('a.zip','wb'), 'password')
+    import StringIO
+    f = StringIO.StringIO()
+    zip = MiniZipAE1Writer(f, 'password')
     zip.append('a.txt', 'CIAO')
     zip.write()
-    zip.close()
+    
+    f.seek(0,0)
 
-    zip = MiniZipAE1Reader(file('a.zip','rb'), 'password')
+    zip = MiniZipAE1Reader(f, 'password')
     assert 'CIAO' == zip.get()
+    print 'TEST PASSED!'
