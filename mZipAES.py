@@ -1,5 +1,6 @@
-# A micro reader & writer for AES-256 encrypted ZIP archives
-# Based on Python 2.7 and pycrypto / openssl's libeay
+# A micro reader & writer for AES encrypted ZIP archives
+# Writes with AES-256 encryption, decrypts with smaller keys, too
+# Based on Python 2.7 x86 and pycrypto/openssl's libeay
 import zlib, struct, time
 
 # 0=Nessuno, 1=pycrypto, 2=libeay
@@ -77,11 +78,17 @@ if CRYPTO_KIT == 1:
         "Genera 128 bit casuali di salt per AES-256"
         return Random.get_random_bytes(16)
 
-    def AE_derive_256bit_keys(password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi a 256 bit per AES \
-        e HMAC-SHA1-80, e i 16 bit di controllo"
-        s = PBKDF2(password, salt, 66)
-        return s[:32], s[32:64], s[64:]
+    def AE_derive_keys(password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
+       e HMAC-SHA1-80, e i 16 bit di controllo"
+        if len(salt) == 16:
+            keylen = 32
+        elif len(salt) == 12:
+            keylen = 24
+        elif len(salt) == 8:
+            keylen = 16
+        s = PBKDF2(password, salt, 2*keylen+2)
+        return s[:keylen], s[keylen:2*keylen], s[2*keylen:]
 
     def AE_ctr_crypt(key, s):
         "Cifra/decifra in AES-256 CTR con contatore Little Endian"
@@ -105,12 +112,18 @@ elif CRYPTO_KIT == 2:
             libeay.RAND_pseudo_bytes(key, 16)
         return key.raw
 
-    def AE_derive_256bit_keys(password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi a 256 bit per AES \
+    def AE_derive_keys(password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
         e HMAC-SHA1-80, e i 16 bit di controllo"
-        s = create_string_buffer(66)
-        libeay.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 66, s)
-        return s.raw[:32], s.raw[32:64], s.raw[64:]
+        if len(salt) == 16:
+            keylen = 32
+        elif len(salt) == 12:
+            keylen = 24
+        elif len(salt) == 8:
+            keylen = 16
+        s = create_string_buffer(2*keylen+2)
+        libeay.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 2*keylen+2, s)
+        return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(key, s):
         "Cifra/decifra in AES-256 CTR con contatore Little Endian"
@@ -205,7 +218,7 @@ class MiniZipAE1Writer():
         # Avvia il compressore Deflate "raw" tramite zlib
         p.compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
         p.salt = AE_gen_salt()
-        p.aes_key, p.hmac_key, p.chkword = AE_derive_256bit_keys(password, p.salt)
+        p.aes_key, p.hmac_key, p.chkword = AE_derive_keys(password, p.salt)
 
     def append(p, entry, s):
         # Nome del file da aggiungere
@@ -264,7 +277,7 @@ class MiniZipAE1Reader():
         # Avvia il decompressore Deflate via zlib
         p.decompressor = zlib.decompressobj(-15)
         p.parse()
-        aes_key, hmac_key, chkword = AE_derive_256bit_keys(password, p.salt)
+        aes_key, hmac_key, chkword = AE_derive_keys(password, p.salt)
         if p.chkword != chkword:
             raise Exception("BAD PASSWORD")
         if p.digest != AE_hmac_sha1_80(hmac_key, p.blob):
@@ -296,11 +309,21 @@ class MiniZipAE1Reader():
             raise Exception("TOO MANY EXT HEADERS")
         p.entry = p.fp.read(namelen)
         xh, cb, ver, vendor, keybits, method = struct.unpack('<4HBH', p.fp.read(xhlen))
-        if xh != 0x9901 or ver != 1 or keybits != 3 or vendor != 0x4541:
+        if xh != 0x9901 or ver != 1 or vendor != 0x4541:
             raise Exception("UNKNOWN AE PROTOCOL")
-        p.salt = p.fp.read(16)
+        if keybits == 3:
+            p.salt = p.fp.read(16)
+            DELTA=28
+        elif keybits == 2:
+            p.salt = p.fp.read(12)
+            DELTA=24
+        elif keybits == 1:
+            p.salt = p.fp.read(8)
+            DELTA=20
+        else:
+            raise Exception("UNKNOWN AES KEY STRENGTH")
         p.chkword = p.fp.read(2)
-        p.blob = p.fp.read(csize-28)
+        p.blob = p.fp.read(csize-DELTA)
         p.digest = p.fp.read(10)
         p.usize = usize
         p.crc32 = crc32
