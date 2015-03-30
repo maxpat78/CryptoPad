@@ -1,9 +1,9 @@
 # A micro reader & writer for AES encrypted ZIP archives
 # Writes with AES-256 encryption, decrypts with smaller keys, too
-# Based on Python 2.7 x86 and pycrypto/openssl's libeay
+# Based on Python 2.7 x86. It requires pycrypto, libeay32 from OpenSSL or botan
 import zlib, struct, time
 
-# 0=Nessuno, 1=pycrypto, 2=libeay
+# 0=Nessuno, 1=pycrypto, 2=libeay, 3=botan
 CRYPTO_KIT = 0
 
 try:
@@ -16,10 +16,11 @@ try:
 except:
     pass
 
+
 if not CRYPTO_KIT:
     try:
         from ctypes import *
-        libeay = CDLL('libeay32')
+        cryptodl = CDLL('libeay32')
         CRYPTO_KIT = 2
 
         # Nel modo CTR il cifrato risulta dallo XOR tra ciascun blocco di testo in chiaro e un contatore cifrato in modo ECB
@@ -33,7 +34,7 @@ if not CRYPTO_KIT:
             # La chiave deve avere 128, 192 o 256 bit
             if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
             AES_KEY = create_string_buffer(244)
-            assert libeay.AES_set_encrypt_key(key, len(key)*8, AES_KEY) == 0
+            assert cryptodl.AES_set_encrypt_key(key, len(key)*8, AES_KEY) == 0
             ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
             # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
             # Possiamo usare tranquillamente solo la prima DWORD come contatore
@@ -44,7 +45,7 @@ if not CRYPTO_KIT:
                 j = (i-1)*16
                 ptr.contents.value += 1
                 # Cifra il valore corrente del contatore
-                libeay.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
+                cryptodl.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
                 # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
                 # 72x slower than pycrypto
                 for k in range(16):
@@ -59,19 +60,30 @@ if not CRYPTO_KIT:
             if j:
                 #~ ctr_counter_le[0:4] = string_at(byref(c_uint(i+1)), 4)
                 ptr.contents.value += 1
-                libeay.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
+                cryptodl.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
                 for k in range(j):
                     es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
             return es
 
         # Se presente, sostituisce con la versione C
         import _libeay
-        AES_ctr128LE_crypt = _libeay.AES_ctr128LE_crypt
+        AES_ctr128_le_crypt = _libeay.AES_ctr128_le_crypt
     except:
         pass
 
+
 if not CRYPTO_KIT:
-    raise Exception("CRYPTO KIT ABSENT")
+    try:
+        from ctypes import *
+        cryptodl = CDLL('botan')
+        CRYPTO_KIT = 3
+    except:
+        pass
+        
+
+if not CRYPTO_KIT:
+    raise Exception("CAN'T RUN - NONE OF THE SUPPORTED CRYPTO KIT IS PRESENT!")
+
     
 if CRYPTO_KIT == 1:
     def AE_gen_salt():
@@ -96,7 +108,7 @@ if CRYPTO_KIT == 1:
         return enc.encrypt(s)
 
     def AE_hmac_sha1_80(key, s):
-        "Autentica con HMAC-SHA1-80 e chiave a 256 bit"
+        "Autentica con HMAC-SHA1-80"
         hmac = HMAC.new(key, digestmod=SHA)
         hmac.update(s)
         return hmac.digest()[:10]
@@ -106,10 +118,10 @@ elif CRYPTO_KIT == 2:
     def AE_gen_salt():
         "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
-        libeay.RAND_poll()
-        libeay.RAND_screen()
-        if not libeay.RAND_bytes(key, 16):
-            libeay.RAND_pseudo_bytes(key, 16)
+        cryptodl.RAND_poll()
+        cryptodl.RAND_screen()
+        if not cryptodl.RAND_bytes(key, 16):
+            cryptodl.RAND_pseudo_bytes(key, 16)
         return key.raw
 
     def AE_derive_keys(password, salt):
@@ -122,7 +134,7 @@ elif CRYPTO_KIT == 2:
         elif len(salt) == 8:
             keylen = 16
         s = create_string_buffer(2*keylen+2)
-        libeay.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 2*keylen+2, s)
+        cryptodl.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 2*keylen+2, s)
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(key, s):
@@ -130,10 +142,83 @@ elif CRYPTO_KIT == 2:
         return AES_ctr128_le_crypt(key, s)
 
     def AE_hmac_sha1_80(key, s):
-        "Autentica con HMAC-SHA1-80 e chiave a 256 bit"
-        digest = libeay.HMAC(libeay.EVP_sha1(), key, len(key), s, len(s), 0, 0);    
+        "Autentica con HMAC-SHA1-80"
+        digest = cryptodl.HMAC(cryptodl.EVP_sha1(), key, len(key), s, len(s), 0, 0);    
         return string_at(digest)[:10]
     
+elif CRYPTO_KIT == 3:
+
+    def AES_ctr128_le_crypt(key, s):
+            if not s: return ''
+            # La chiave deve avere 128, 192 o 256 bit
+            if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
+
+            cipher = c_void_p(0)
+            cryptodl.botan_cipher_init(byref(cipher), 'AES-256/ECB', 0)
+            cryptodl.botan_cipher_set_key(cipher, key, len(key))
+
+            ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
+            # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
+            # Possiamo usare tranquillamente solo la prima DWORD come contatore
+            ptr = cast(ctr_counter_le, POINTER(c_ulong))
+            es = ''
+            i = 1 # il contatore parte da 1
+            for i in range(i, (len(s)/16)+1):
+                j = (i-1)*16
+                ptr.contents.value += 1
+                # Cifra il valore corrente del contatore
+                o0, i0 = c_size_t(0), c_size_t(0)
+                cryptodl.botan_cipher_update(cipher, c_uint32(1), ctr_encrypted_counter, 16, byref(o0), ctr_counter_le, 16, byref(i0))
+                # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
+                # 72x slower than pycrypto
+                for k in range(16):
+                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[j+k]))
+            # Elabora il blocco parziale eventualmente residuato
+            j = len(s)%16
+            if j:
+                ptr.contents.value += 1
+                o0, i0 = c_size_t(0), c_size_t(0)
+                cryptodl.botan_cipher_update(cipher, c_uint32(1), ctr_encrypted_counter, 16, byref(o0), ctr_counter_le, 16, byref(i0))
+                for k in range(j):
+                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
+            return es
+
+    def AE_gen_salt():
+        "Genera 128 bit casuali di salt per AES-256"
+        key = create_string_buffer(16)
+        rng = c_void_p(0)
+        cryptodl.botan_rng_init(byref(rng), 'system')
+        cryptodl.botan_rng_get(rng, key, c_size_t(16))
+        return key.raw
+
+    def AE_derive_keys(password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
+        e HMAC-SHA1-80, e i 16 bit di controllo"
+        if len(salt) == 16:
+            keylen = 32
+        elif len(salt) == 12:
+            keylen = 24
+        elif len(salt) == 8:
+            keylen = 16
+        s = create_string_buffer(2*keylen+2)
+        cryptodl.botan_pbkdf('PBKDF2(SHA-1)', s, 2*keylen+2, password, salt, len(salt), 1000)
+        return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
+
+    def AE_ctr_crypt(key, s):
+        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
+        return AES_ctr128_le_crypt(key, s)
+
+    def AE_hmac_sha1_80(key, s):
+        "Autentica con HMAC-SHA1-80"
+        digest = create_string_buffer(20)
+        mac = c_void_p(0)
+        cryptodl.botan_mac_init(byref(mac), 'HMAC(SHA-1)', 0)
+        cryptodl.botan_mac_set_key(mac, key, len(key))
+        cryptodl.botan_mac_update(mac, s, len(s))
+        cryptodl.botan_mac_final(mac, digest)
+        return string_at(digest)[:10]
+
+        
 #~ Local file header:
 
     #~ local file header signature     4 bytes  (0x04034b50)

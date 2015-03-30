@@ -9,7 +9,11 @@ It encrypts always with AES-256, but can read files encrypted with 128 or 192 bi
 File contents are also deflated before encryption.
 
 
-The well known AE-1 specification[1] is implemented, so installing the additional Python Cryptography Toolkit pycrypto[2] or the libeay32 DLL from OpenSSL[3] is required to run the app.
+The well known AE-1 specificationfrom WinZip[1] is implemented, so one of the following cryptographic toolkits/libraries is required to run the app:
+
+- Python Cryptography Toolkit pycrypto[2]
+- libeay32 from OpenSSL[3]
+- Botan [4]
 
 _libeay.c provides a C version of AES-256 CTR Little-Endian encryption performed by AE-1, openssl based.
 
@@ -20,3 +24,5 @@ _libeay.c provides a C version of AES-256 CTR Little-Endian encryption performed
 [2] See https://www.dlitz.net/software/pycrypto/
 
 [3] See https://www.openssl.org/
+
+[4] See http://botan.randombit.net/
