@@ -93,12 +93,7 @@ if CRYPTO_KIT == 1:
     def AE_derive_keys(password, salt):
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
        e HMAC-SHA1-80, e i 16 bit di controllo"
-        if len(salt) == 16:
-            keylen = 32
-        elif len(salt) == 12:
-            keylen = 24
-        elif len(salt) == 8:
-            keylen = 16
+        keylen = {8:16,12:24,16:32}[len(salt)]
         s = PBKDF2(password, salt, 2*keylen+2)
         return s[:keylen], s[keylen:2*keylen], s[2*keylen:]
 
@@ -127,12 +122,7 @@ elif CRYPTO_KIT == 2:
     def AE_derive_keys(password, salt):
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
         e HMAC-SHA1-80, e i 16 bit di controllo"
-        if len(salt) == 16:
-            keylen = 32
-        elif len(salt) == 12:
-            keylen = 24
-        elif len(salt) == 8:
-            keylen = 16
+        keylen = {8:16,12:24,16:32}[len(salt)]
         s = create_string_buffer(2*keylen+2)
         cryptodl.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 2*keylen+2, s)
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
@@ -194,12 +184,7 @@ elif CRYPTO_KIT == 3:
     def AE_derive_keys(password, salt):
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
         e HMAC-SHA1-80, e i 16 bit di controllo"
-        if len(salt) == 16:
-            keylen = 32
-        elif len(salt) == 12:
-            keylen = 24
-        elif len(salt) == 8:
-            keylen = 16
+        keylen = {8:16,12:24,16:32}[len(salt)]
         s = create_string_buffer(2*keylen+2)
         cryptodl.botan_pbkdf('PBKDF2(SHA-1)', s, 2*keylen+2, password, salt, len(salt), 1000)
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
