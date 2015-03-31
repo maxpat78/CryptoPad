@@ -16,6 +16,7 @@ The well known AE-1 specification from WinZip[1] is implemented, so one of the f
 - Python Cryptography Toolkit pycrypto[2]
 - libeay32 from OpenSSL[3]
 - Botan[4]
+- NSS from Mozilla[5]
 
 _libeay.c provides a C version of AES-256 CTR Little-Endian encryption performed by AE-1, openssl based.
 
@@ -28,3 +29,6 @@ _libeay.c provides a C version of AES-256 CTR Little-Endian encryption performed
 [3] See https://www.openssl.org/
 
 [4] See http://botan.randombit.net/
+
+[5] See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS
+

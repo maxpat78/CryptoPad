@@ -1,9 +1,10 @@
 # A micro reader & writer for AES encrypted ZIP archives
 # Writes with AES-256 encryption, decrypts with smaller keys, too
-# Based on Python 2.7 x86. It requires pycrypto, libeay32 from OpenSSL or botan
+# Based on Python 2.7 x86. It requires one of the cypto toolkits
+# pycrypto, libeay32 from OpenSSL, botan or NSS from Mozilla
 import zlib, struct, time
 
-# 0=Nessuno, 1=pycrypto, 2=libeay, 3=botan
+# 0=Nessuno, 1=pycrypto, 2=libeay, 3=botan, 4=nss3
 CRYPTO_KIT = 0
 
 try:
@@ -77,6 +78,19 @@ if not CRYPTO_KIT:
         from ctypes import *
         cryptodl = CDLL('botan')
         CRYPTO_KIT = 3
+    except:
+        pass
+
+
+if not CRYPTO_KIT:
+    try:
+        from ctypes import *
+        cryptodl = CDLL('nss3')
+        cryptodl.NSS_NoDB_Init(".")
+        # Servono almeno le DLL nss3, softokn3, freebl3, mozglue
+        if not cryptodl.NSS_IsInitialized():
+            raise Exception("NSS3 INITIALIZATION FAILED")
+        CRYPTO_KIT = 4
     except:
         pass
         
@@ -203,6 +217,134 @@ elif CRYPTO_KIT == 3:
         cryptodl.botan_mac_final(mac, digest)
         return string_at(digest)[:10]
 
+elif CRYPTO_KIT == 4:
+    
+    # In lib\util\seccommon.h
+    class SECItemStr(Structure):
+        _fields_ = [('SECItemType', c_uint), ('data', POINTER(c_char)), ('len', c_uint)]
+
+    def AES_ctr128_le_crypt(key, s):
+            if not s: return ''
+            # La chiave deve avere 128, 192 o 256 bit
+            if len(key) not in (16,24,32):
+                raise Exception("BAD AES KEY LENGTH %d BYTES" % len(key))
+
+            # In nss\lib\util\pkcs11t.h: CKM_AES_ECB = 0x1081
+            slot = cryptodl.PK11_GetBestSlot(0x1081, 0)
+            
+            ki = SECItemStr()
+            ki.SECItemType = 0 # type siBuffer
+            # Esiste un modo migliore? Purtroppo .data non puo' essere c_char_p
+            # in quanto troncherebbe al primo NULL
+            ki.data = (c_char*len(key)).from_buffer_copy(key)
+            ki.len = len(key)
+            
+            # PK11_OriginUnwrap = 4
+            # CKA_ENCRYPT = 0x104
+            sk = cryptodl.PK11_ImportSymKey(slot, 0x1081, 4, 0x104, byref(ki), 0)
+            sp = cryptodl.PK11_ParamFromIV(0x1081, 0)
+            ctxt = cryptodl.PK11_CreateContextBySymKey(0x1081, 0x104, sk, sp)
+            
+            ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
+            # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
+            # Possiamo usare tranquillamente solo la prima DWORD come contatore
+            ptr = cast(ctr_counter_le, POINTER(c_ulong))
+            es = ''
+            i = 1 # il contatore parte da 1
+            olen = c_uint32(0)
+            for i in range(i, (len(s)/16)+1):
+                j = (i-1)*16
+                ptr.contents.value += 1
+                # Cifra il valore corrente del contatore
+                cryptodl.PK11_CipherOp(ctxt, ctr_encrypted_counter, byref(olen), 16, ctr_counter_le, 16)
+                # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
+                # 72x slower than pycrypto
+                for k in range(16):
+                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[j+k]))
+            # Elabora il blocco parziale eventualmente residuato
+            j = len(s)%16
+            if j:
+                ptr.contents.value += 1
+                cryptodl.PK11_CipherOp(ctxt, ctr_encrypted_counter, byref(olen), 16, ctr_counter_le, 16)
+                # Non serve, dato che la dimensione di ctr_counter_le eguaglia sempre il blocco AES
+                #~ cryptodl.PK11_DigestFinal(ctxt, ctr_encrypted_counter, byref(olen), 16-olen.value)
+                for k in range(j):
+                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
+                    
+            cryptodl.PK11_DestroyContext(ctxt, 1)
+            cryptodl.PK11_FreeSymKey(sk)
+            cryptodl.PK11_FreeSlot(slot)
+            
+            return es
+
+    def AE_gen_salt():
+        "Genera 128 bit casuali di salt per AES-256"
+        key = create_string_buffer(16)
+        cryptodl.PK11_GenerateRandom(key, 16)
+        return key.raw
+
+    def AE_derive_keys(password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
+      e HMAC-SHA1-80, e i 16 bit di controllo"
+        keylen = {8:16,12:24,16:32}[len(salt)]
+        
+        si = SECItemStr()
+        si.SECItemType = 0 # type siBuffer
+        si.data = (c_char*len(salt)).from_buffer_copy(salt)
+        si.len = len(salt)
+
+        # SEC_OID_PKCS5_PBKDF2 = 291
+        # SEC_OID_HMAC_SHA1 = 294
+        algid = cryptodl.PK11_CreatePBEV2AlgorithmID(291, 291, 294, 2*keylen+2, 1000, byref(si))
+
+        # CKM_PKCS5_PBKD2 = 0x3B0
+        slot = cryptodl.PK11_GetBestSlot(0x3B0, 0)
+        
+        pi = SECItemStr()
+        pi.SECItemType = 0 # type siBuffer
+        pi.data = (c_char*len(password)).from_buffer_copy(password)
+        pi.len = len(password)
+        
+        sk = cryptodl.PK11_PBEKeyGen(slot, algid, byref(pi), 0, 0)
+        cryptodl.PK11_ExtractKeyValue(sk)
+        pkd = cryptodl.PK11_GetKeyData(sk)
+        rawkey = cast(pkd, POINTER(SECItemStr)).contents.data[:2*keylen+2]
+        a,b,c = rawkey[:keylen], rawkey[keylen:2*keylen], rawkey[2*keylen:] 
+        cryptodl.PK11_FreeSymKey(sk)
+        cryptodl.PK11_FreeSlot(slot)
+        return a, b, c
+
+    def AE_ctr_crypt(key, s):
+        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
+        return AES_ctr128_le_crypt(key, s)
+
+    def AE_hmac_sha1_80(key, s):
+        "Autentica con HMAC-SHA1-80"
+        ki = SECItemStr()
+        ki.SECItemType = 0 # type siBuffer
+        ki.data = (c_char*len(key)).from_buffer_copy(key)
+        ki.len = len(key)
+
+        # In lib\util\pkcs11t.h
+        #define CKM_SHA_1_HMAC         0x00000221
+        #define CKA_SIGN               0x00000108
+        slot = cryptodl.PK11_GetBestSlot(0x221, 0)
+        # PK11_OriginUnwrap = 4
+        sk = cryptodl.PK11_ImportSymKey(slot, 0x221, 4, 0x108, byref(ki), 0)
+
+        np = SECItemStr()
+        ctxt = cryptodl.PK11_CreateContextBySymKey(0x221, 0x108, sk, byref(np))
+        cryptodl.PK11_DigestBegin(ctxt)
+        cryptodl.PK11_DigestOp(ctxt, s, len(s))
+        digest = create_string_buffer(20)
+        length = c_uint32(0)
+        cryptodl.PK11_DigestFinal(ctxt, digest, byref(length), 20)
+
+        cryptodl.PK11_DestroyContext(ctxt, 1)
+        cryptodl.PK11_FreeSymKey(sk)
+        cryptodl.PK11_FreeSlot(slot)
+
+        return digest.raw[:10]
         
 #~ Local file header:
 
@@ -289,7 +431,7 @@ class MiniZipAE1Writer():
         p.compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
         p.salt = AE_gen_salt()
         p.aes_key, p.hmac_key, p.chkword = AE_derive_keys(password, p.salt)
-
+        
     def append(p, entry, s):
         # Nome del file da aggiungere
         p.entry = entry
