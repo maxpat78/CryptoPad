@@ -94,6 +94,7 @@ class CryptoPad(Tk):
                 p.password = tkSimpleDialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
             zip = MiniZipAE1Reader(p.PCPfile, p.password)
             s = zip.get()
+            s = s.replace('\x0D\x0A', '\x0A')
             p.textPad.insert('1.0', s)
             p.title(os.path.basename(p.PCPfile.name)[:-5] + s_Title)
             p.textPad.edit_modified(False)
@@ -102,10 +103,12 @@ class CryptoPad(Tk):
         if p.PCPfile == None:
             p.saveas_command()
         s = p.textPad.get('1.0', END+'-1c')
+        s = s.encode('utf-8')
+        s = s.replace('\x0A', '\x0D\x0A')
         p.PCPfile.seek(0,0)
         zip = MiniZipAE1Writer(p.PCPfile, p.password)
         zip.append(os.path.basename(p.PCPfile.name).replace('.etxt','.txt'), s)
-        zip.zipcomment = 'CryptoPad 0.1 Document'
+        zip.zipcomment = 'CryptoPad Document'
         zip.write()
         p.title(os.path.basename(p.PCPfile.name)[:-5] + s_Title)
         p.textPad.edit_modified(False)

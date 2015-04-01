@@ -1,7 +1,9 @@
 # A micro reader & writer for AES encrypted ZIP archives
-# Writes with AES-256 encryption, decrypts with smaller keys, too
-# Based on Python 2.7 x86. It requires one of the cypto toolkits
-# pycrypto, libeay32 from OpenSSL, botan or NSS from Mozilla
+
+# Encrypts in AES-256, decrypts with smaller keys, too
+
+# Based on Python 2.7 x86. It requires one of the cypto toolkits/libraries:
+# pycrypto, libeay from OpenSSL, botan or NSS from Mozilla
 import zlib, struct, time
 
 # 0=Nessuno, 1=pycrypto, 2=libeay, 3=botan, 4=nss3
@@ -17,54 +19,49 @@ try:
 except:
     pass
 
-
 if not CRYPTO_KIT:
     try:
         from ctypes import *
         cryptodl = CDLL('libeay32')
         CRYPTO_KIT = 2
 
-        # Nel modo CTR il cifrato risulta dallo XOR tra ciascun blocco di testo in chiaro e un contatore cifrato in modo ECB
-        # realizzato, preferibilmente, mediante unione di n bit casuali con n bit di contatore.
-        # I protocolli AE-1 e AE-2 di WinZip richiedono che il contatore sia un numero a 128 bit codificato in Little Endian
-        # diversamente dalle maggiori implementazioni in Big Endian; inoltre il contatore parte da 1 senza
+        # Nel modo CTR il cifrato risulta dallo XOR tra ciascun blocco di testo
+        # in chiaro e un contatore cifrato in modo ECB realizzato,
+        # preferibilmente, mediante unione di n bit casuali con n bit di contatore.
+        # Il protocollo AE di WinZip richiede che il contatore sia un numero a
+        # 128 bit codificato in Little Endian diversamente dalle maggiori
+        # implementazioni in Big Endian; inoltre il contatore parte da 1 senza
         # alcun contenuto casuale.
-        # NOTA: la versione C e' veloce quanto quella pycrypto
+        #
+        # NOTA: la versione C e' veloce quanto quella pycrypto; questa, ibrida,
+        # circa 35 volte piu' lenta!
         def AES_ctr128_le_crypt(key, s):
-            if not s: return ''
-            # La chiave deve avere 128, 192 o 256 bit
             if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
-            AES_KEY = create_string_buffer(244)
-            assert cryptodl.AES_set_encrypt_key(key, len(key)*8, AES_KEY) == 0
-            ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
-            # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
-            # Possiamo usare tranquillamente solo la prima DWORD come contatore
-            ptr = cast(ctr_counter_le, POINTER(c_ulong))
-            es = ''
-            i = 1 # il contatore parte da 1
-            for i in range(i, (len(s)/16)+1):
-                j = (i-1)*16
-                ptr.contents.value += 1
-                # Cifra il valore corrente del contatore
-                cryptodl.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
-                # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
-                # 72x slower than pycrypto
-                for k in range(16):
-                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[j+k]))
-                # 88x slower than pycrypto
-                #~ for k in range(0, 16, 8):
-                    #~ a = cast(ctr_encrypted_counter.raw[k:k+8], POINTER(c_ulonglong)).contents.value
-                    #~ b = cast(s[j+k:j+k+8], POINTER(c_ulonglong)).contents.value
-                    #~ es += string_at(byref(c_ulonglong(a^b)),8)
-            # Elabora il blocco parziale eventualmente residuato
-            j = len(s)%16
-            if j:
-                #~ ctr_counter_le[0:4] = string_at(byref(c_uint(i+1)), 4)
-                ptr.contents.value += 1
-                cryptodl.AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, AES_KEY, 1)
-                for k in range(j):
-                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
-            return es
+            
+            AES_KEY = 244*'\x00'
+            cryptodl.AES_set_encrypt_key(key, len(key)*8, AES_KEY)
+            
+            buf = (c_byte*len(s)).from_buffer_copy(s)
+            p = base = addressof(buf)
+            eobuf = base+len(s)
+            
+            ctr = create_string_buffer(16)
+            ectr = create_string_buffer(16)
+            pectr = cast(ectr, POINTER(c_byte))
+            i = 1
+            while 1:
+                # Veloce quanto l'assegnazione a puntatore: MA rispetta l'endianness
+                struct.pack_into('<Q', ctr, 0, i)
+                i+=1
+                cryptodl.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+                j = 0
+                while j < 16:
+                    buf[p-base] ^= pectr[j]
+                    p+=1
+                    if p == eobuf: break
+                    j+=1
+                if p == eobuf: break
+            return str(bytearray(buf))
 
         # Se presente, sostituisce con la versione C
         import _libeay
@@ -72,15 +69,42 @@ if not CRYPTO_KIT:
     except:
         pass
 
-
 if not CRYPTO_KIT:
     try:
         from ctypes import *
         cryptodl = CDLL('botan')
         CRYPTO_KIT = 3
+        
+        def AES_ctr128_le_crypt(key, s):
+            if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
+
+            cipher = c_void_p(0)
+            cryptodl.botan_cipher_init(byref(cipher), 'AES-256/ECB', 0)
+            cryptodl.botan_cipher_set_key(cipher, key, len(key))
+            
+            buf = (c_byte*len(s)).from_buffer_copy(s)
+            p = base = addressof(buf)
+            eobuf = base+len(s)
+            
+            ctr = create_string_buffer(16)
+            ectr = create_string_buffer(16)
+            pectr = cast(ectr, POINTER(c_byte))
+            i = 1
+            while 1:
+                struct.pack_into('<Q', ctr, 0, i)
+                i+=1
+                o0, i0 = c_size_t(0), c_size_t(0)
+                cryptodl.botan_cipher_update(cipher, c_uint32(1), ectr, 16, byref(o0), ctr, 16, byref(i0))
+                j = 0
+                while j < 16:
+                    buf[p-base] ^= pectr[j]
+                    p+=1
+                    if p == eobuf: break
+                    j+=1
+                if p == eobuf: break
+            return str(bytearray(buf))
     except:
         pass
-
 
 if not CRYPTO_KIT:
     try:
@@ -91,6 +115,56 @@ if not CRYPTO_KIT:
         if not cryptodl.NSS_IsInitialized():
             raise Exception("NSS3 INITIALIZATION FAILED")
         CRYPTO_KIT = 4
+        
+        # In lib\util\seccommon.h
+        class SECItemStr(Structure):
+            _fields_ = [('SECItemType', c_uint), ('data', POINTER(c_char)), ('len', c_uint)]
+        
+        def AES_ctr128_le_crypt(key, s):
+            if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
+            
+            # In nss\lib\util\pkcs11t.h: CKM_AES_ECB = 0x1081
+            slot = cryptodl.PK11_GetBestSlot(0x1081, 0)
+            
+            ki = SECItemStr()
+            ki.SECItemType = 0 # type siBuffer
+            # Esiste un modo migliore? Purtroppo .data non puo' essere c_char_p
+            # in quanto troncherebbe al primo NULL
+            ki.data = (c_char*len(key)).from_buffer_copy(key)
+            ki.len = len(key)
+            
+            # PK11_OriginUnwrap = 4
+            # CKA_ENCRYPT = 0x104
+            sk = cryptodl.PK11_ImportSymKey(slot, 0x1081, 4, 0x104, byref(ki), 0)
+            sp = cryptodl.PK11_ParamFromIV(0x1081, 0)
+            ctxt = cryptodl.PK11_CreateContextBySymKey(0x1081, 0x104, sk, sp)
+            
+            buf = (c_byte*len(s)).from_buffer_copy(s)
+            p = base = addressof(buf)
+            eobuf = base+len(s)
+            
+            ctr = create_string_buffer(16)
+            ectr = create_string_buffer(16)
+            pectr = cast(ectr, POINTER(c_byte))
+            olen = c_uint32(0)
+            i = 1
+            while 1:
+                struct.pack_into('<Q', ctr, 0, i)
+                i+=1
+                cryptodl.PK11_CipherOp(ctxt, ectr, byref(olen), 16, ctr, 16)
+                j = 0
+                while j < 16:
+                    buf[p-base] ^= pectr[j]
+                    p+=1
+                    if p == eobuf: break
+                    j+=1
+                if p == eobuf: break
+
+            cryptodl.PK11_DestroyContext(ctxt, 1)
+            cryptodl.PK11_FreeSymKey(sk)
+            cryptodl.PK11_FreeSlot(slot)
+
+            return str(bytearray(buf))
     except:
         pass
         
@@ -152,41 +226,6 @@ elif CRYPTO_KIT == 2:
     
 elif CRYPTO_KIT == 3:
 
-    def AES_ctr128_le_crypt(key, s):
-            if not s: return ''
-            # La chiave deve avere 128, 192 o 256 bit
-            if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
-
-            cipher = c_void_p(0)
-            cryptodl.botan_cipher_init(byref(cipher), 'AES-256/ECB', 0)
-            cryptodl.botan_cipher_set_key(cipher, key, len(key))
-
-            ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
-            # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
-            # Possiamo usare tranquillamente solo la prima DWORD come contatore
-            ptr = cast(ctr_counter_le, POINTER(c_ulong))
-            es = ''
-            i = 1 # il contatore parte da 1
-            for i in range(i, (len(s)/16)+1):
-                j = (i-1)*16
-                ptr.contents.value += 1
-                # Cifra il valore corrente del contatore
-                o0, i0 = c_size_t(0), c_size_t(0)
-                cryptodl.botan_cipher_update(cipher, c_uint32(1), ctr_encrypted_counter, 16, byref(o0), ctr_counter_le, 16, byref(i0))
-                # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
-                # 72x slower than pycrypto
-                for k in range(16):
-                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[j+k]))
-            # Elabora il blocco parziale eventualmente residuato
-            j = len(s)%16
-            if j:
-                ptr.contents.value += 1
-                o0, i0 = c_size_t(0), c_size_t(0)
-                cryptodl.botan_cipher_update(cipher, c_uint32(1), ctr_encrypted_counter, 16, byref(o0), ctr_counter_le, 16, byref(i0))
-                for k in range(j):
-                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
-            return es
-
     def AE_gen_salt():
         "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
@@ -219,64 +258,6 @@ elif CRYPTO_KIT == 3:
 
 elif CRYPTO_KIT == 4:
     
-    # In lib\util\seccommon.h
-    class SECItemStr(Structure):
-        _fields_ = [('SECItemType', c_uint), ('data', POINTER(c_char)), ('len', c_uint)]
-
-    def AES_ctr128_le_crypt(key, s):
-            if not s: return ''
-            # La chiave deve avere 128, 192 o 256 bit
-            if len(key) not in (16,24,32):
-                raise Exception("BAD AES KEY LENGTH %d BYTES" % len(key))
-
-            # In nss\lib\util\pkcs11t.h: CKM_AES_ECB = 0x1081
-            slot = cryptodl.PK11_GetBestSlot(0x1081, 0)
-            
-            ki = SECItemStr()
-            ki.SECItemType = 0 # type siBuffer
-            # Esiste un modo migliore? Purtroppo .data non puo' essere c_char_p
-            # in quanto troncherebbe al primo NULL
-            ki.data = (c_char*len(key)).from_buffer_copy(key)
-            ki.len = len(key)
-            
-            # PK11_OriginUnwrap = 4
-            # CKA_ENCRYPT = 0x104
-            sk = cryptodl.PK11_ImportSymKey(slot, 0x1081, 4, 0x104, byref(ki), 0)
-            sp = cryptodl.PK11_ParamFromIV(0x1081, 0)
-            ctxt = cryptodl.PK11_CreateContextBySymKey(0x1081, 0x104, sk, sp)
-            
-            ctr_counter_le, ctr_encrypted_counter = create_string_buffer(16), create_string_buffer(16)
-            # In nessun caso un elemento di un archivio ZIP non ZIP64 supera i 4 GiB
-            # Possiamo usare tranquillamente solo la prima DWORD come contatore
-            ptr = cast(ctr_counter_le, POINTER(c_ulong))
-            es = ''
-            i = 1 # il contatore parte da 1
-            olen = c_uint32(0)
-            for i in range(i, (len(s)/16)+1):
-                j = (i-1)*16
-                ptr.contents.value += 1
-                # Cifra il valore corrente del contatore
-                cryptodl.PK11_CipherOp(ctxt, ctr_encrypted_counter, byref(olen), 16, ctr_counter_le, 16)
-                # Esegue (lentamente!) lo XOR con il testo in chiaro, 64 bit alla volta
-                # 72x slower than pycrypto
-                for k in range(16):
-                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[j+k]))
-            # Elabora il blocco parziale eventualmente residuato
-            j = len(s)%16
-            if j:
-                ptr.contents.value += 1
-                cryptodl.PK11_CipherOp(ctxt, ctr_encrypted_counter, byref(olen), 16, ctr_counter_le, 16)
-                # Non serve, dato che la dimensione di ctr_counter_le eguaglia sempre il blocco AES
-                #~ cryptodl.PK11_DigestFinal(ctxt, ctr_encrypted_counter, byref(olen), 16-olen.value)
-                for k in range(j):
-                    es += chr(ord(ctr_encrypted_counter.raw[k]) ^ ord(s[-j+k]))
-                    
-            cryptodl.PK11_DestroyContext(ctxt, 1)
-            cryptodl.PK11_FreeSymKey(sk)
-            cryptodl.PK11_FreeSlot(slot)
-            
-            return es
-
     def AE_gen_salt():
         "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
@@ -345,81 +326,83 @@ elif CRYPTO_KIT == 4:
         cryptodl.PK11_FreeSlot(slot)
 
         return digest.raw[:10]
-        
-#~ Local file header:
 
-    #~ local file header signature     4 bytes  (0x04034b50)
-    #~ version needed to extract       2 bytes
-    #~ general purpose bit flag        2 bytes
-    #~ compression method              2 bytes
-    #~ last mod file time              2 bytes
-    #~ last mod file date              2 bytes
-    #~ crc-32                          4 bytes
-    #~ compressed size                 4 bytes
-    #~ uncompressed size               4 bytes
-    #~ filename length                 2 bytes
-    #~ extra field length              2 bytes
 
-    #~ filename (variable size)
-    #~ extra field (variable size)
 
-#~ Extended AES header (both local & central) based on WinZip 9 specs:
+"""Local file header:
 
-    #~ extra field header      2 bytes  (0x9901)
-    #~ size                    2 bytes  (7)
-    #~ version                 2 bytes  (1 or 2)
-    #~ ZIP vendor              2 bytes  (actually, AE)
-    #~ strength                1 byte   (AES 1=128-bit key, 2=192, 3=256)
-    #~ actual compression      2 byte   (becomes 0x99 in LENT & CENT)
+    local file header signature     4 bytes  (0x04034b50)
+    version needed to extract       2 bytes
+    general purpose bit flag        2 bytes
+    compression method              2 bytes
+    last mod file time              2 bytes
+    last mod file date              2 bytes
+    crc-32                          4 bytes
+    compressed size                 4 bytes
+    uncompressed size               4 bytes
+    filename length                 2 bytes
+    extra field length              2 bytes
 
-    #~ content data, as follows:
-    #~ random salt (8, 12, 16 byte depending on key size)
-    #~ 2-byte password verification value (from PBKDF2)
-    #~ AES-CTR encrypted data
-    #~ 10-byte HMAC-SHA1-80 authentication code for encrypted data
+    filename (variable size)
+    extra field (variable size)
 
-#~ NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero.
+Extended AES header (both local & central) based on WinZip 9 specs:
 
-  #~ Central File header:
+    extra field header      2 bytes  (0x9901)
+    size                    2 bytes  (7)
+    version                 2 bytes  (1 or 2)
+    ZIP vendor              2 bytes  (actually, AE)
+    strength                1 byte   (AES 1=128-bit key, 2=192, 3=256)
+    actual compression      2 byte   (becomes 0x99 in LENT & CENT)
 
-    #~ central file header signature   4 bytes  (0x02014b50)
-    #~ version made by                 2 bytes
-    #~ version needed to extract       2 bytes
-    #~ general purpose bit flag        2 bytes
-    #~ compression method              2 bytes
-    #~ last mod file time              2 bytes
-    #~ last mod file date              2 bytes
-    #~ crc-32                          4 bytes
-    #~ compressed size                 4 bytes
-    #~ uncompressed size               4 bytes
-    #~ filename length                 2 bytes
-    #~ extra field length              2 bytes
-    #~ file comment length             2 bytes
-    #~ disk number start               2 bytes
-    #~ internal file attributes        2 bytes
-    #~ external file attributes        4 bytes
-    #~ relative offset of local header 4 bytes
+    content data, as follows:
+    random salt (8, 12, 16 byte depending on key size)
+    2-byte password verification value (from PBKDF2)
+    AES-CTR-LE encrypted data
+    10-byte HMAC-SHA1-80 authentication code for encrypted data
 
-    #~ filename (variable size)
-    #~ extra field (variable size)
-    #~ file comment (variable size)
+NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero.
 
-  #~ End of central dir record:
+  Central File header:
 
-    #~ end of central dir signature    4 bytes  (0x06054b50)
-    #~ number of this disk             2 bytes
-    #~ number of the disk with the
-    #~ start of the central directory  2 bytes
-    #~ total number of entries in
-    #~ the central dir on this disk    2 bytes
-    #~ total number of entries in
-    #~ the central dir                 2 bytes
-    #~ size of the central directory   4 bytes
-    #~ offset of start of central
-    #~ directory with respect to
-    #~ the starting disk number        4 bytes
-    #~ zipfile comment length          2 bytes
-    #~ zipfile comment (variable size)
+    central file header signature   4 bytes  (0x02014b50)
+    version made by                 2 bytes
+    version needed to extract       2 bytes
+    general purpose bit flag        2 bytes
+    compression method              2 bytes
+    last mod file time              2 bytes
+    last mod file date              2 bytes
+    crc-32                          4 bytes
+    compressed size                 4 bytes
+    uncompressed size               4 bytes
+    filename length                 2 bytes
+    extra field length              2 bytes
+    file comment length             2 bytes
+    disk number start               2 bytes
+    internal file attributes        2 bytes
+    external file attributes        4 bytes
+    relative offset of local header 4 bytes
+
+    filename (variable size)
+    extra field (variable size)
+    file comment (variable size)
+
+  End of central dir record:
+
+    end of central dir signature    4 bytes  (0x06054b50)
+    number of this disk             2 bytes
+    number of the disk with the
+    start of the central directory  2 bytes
+    total number of entries in
+    the central dir on this disk    2 bytes
+    total number of entries in
+    the central dir                 2 bytes
+    size of the central directory   4 bytes
+    offset of start of central
+    directory with respect to
+    the starting disk number        4 bytes
+    zipfile comment length          2 bytes
+    zipfile comment (variable size)"""
 
         
 
@@ -546,11 +529,11 @@ if __name__ == '__main__':
     import StringIO
     f = StringIO.StringIO()
     zip = MiniZipAE1Writer(f, 'password')
-    zip.append('a.txt', 'CIAO')
+    zip.append('a.txt', 999*'CIAO')
     zip.write()
     
     f.seek(0,0)
 
     zip = MiniZipAE1Reader(f, 'password')
-    assert 'CIAO' == zip.get()
+    assert 999*'CIAO' == zip.get()
     print 'TEST PASSED!'
