@@ -1,7 +1,7 @@
 CryptoPad
 =========
 
-A simple Notepad coded in Python 2.7 and Tkinter (x86) and tested under Windows 8.1 x86.
+A simple Notepad coded in Python and Tkinter (x86) and tested under Windows 8.1. Both Python 2.7 and 3.4 (see inside py3k directory) are supported.
 
 
 It is able to read and write ETXT text documents, which are simple ZIP archives encrypted with AES, for maximum security and portability.

@@ -1,6 +1,5 @@
-from Tkinter import *
-from ScrolledText import *
-import tkFileDialog, tkMessageBox, tkSimpleDialog
+from tkinter import *
+from tkinter import scrolledtext, filedialog, messagebox, simpledialog
 from mZipAES import MiniZipAE1Writer, MiniZipAE1Reader
 import os
 
@@ -23,7 +22,7 @@ if 0:
     s_RepeatPassword = 'Repeat'
     s_Password = ' the passphrase to encrypt/decrypt the document:'
     s_Quit = 'Quit'
-    s_QuitMsg = 'Do you really want to discard changes to the open document?'
+    s_QuitMsg = 'Do you really want to exit CryptoPad and loose modifications?'
     s_Info = 'About CryptoPad'
     s_InfoMsg = 'CryptoPad 0.1\n\nA simple notepad supporting documents in ZIP AES-256 encrypted format.'
 else:
@@ -55,7 +54,7 @@ class CryptoPad(Tk):
     def __init__ (p):
         Tk.__init__(p)
         p.title(s_NewDoc+s_Title)
-        p.textPad = ScrolledText(p, width=100, height=30, wrap=WORD)
+        p.textPad = scrolledtext.ScrolledText(p, width=100, height=30, wrap=WORD)
         p.PCPfile = None
         p.password = None
         
@@ -86,16 +85,13 @@ class CryptoPad(Tk):
         p.wm_protocol ("WM_DELETE_WINDOW", p.exit_command)
         
     def open_command(p):
-        if p.textPad.edit_modified():
-            if not tkMessageBox.askokcancel(s_New, s_NewMsg):
-                return
-
-        p.PCPfile = tkFileDialog.askopenfile(parent=p, mode='r+b', defaultextension='.etxt', filetypes=[('CryptoPad document', '*.etxt'),], title=s_MenuFileOpen)
+        p.PCPfile = filedialog.askopenfile(parent=p, mode='r+b', defaultextension='.etxt', filetypes=[('CryptoPad document', '*.etxt'),], title=s_MenuFileOpen)
         
         if p.PCPfile != None:
             p.password = None
             if p.password == None:
-                p.password = tkSimpleDialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
+                p.password = simpledialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
+                p.password = p.password
             zip = MiniZipAE1Reader(p.PCPfile, p.password)
             s = zip.get()
             s = s.decode('utf-8')
@@ -120,7 +116,7 @@ class CryptoPad(Tk):
         p.textPad.edit_modified(False)
 
     def saveas_command(p):
-        new_file = tkFileDialog.asksaveasfile(mode='wb', defaultextension='.etxt', filetypes=[('CryptoPad document', '*.etxt'),], title=s_MenuFileSave)
+        new_file = filedialog.asksaveasfile(mode='wb', defaultextension='.etxt', filetypes=[('CryptoPad document', '*.etxt'),], title=s_MenuFileSave)
         if new_file == None:
             return
         p.PCPfile = new_file
@@ -130,8 +126,8 @@ class CryptoPad(Tk):
             if p.password == None:
                 pw1, pw2 = 0, 1
                 while pw1 != pw2:
-                    pw1 = tkSimpleDialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
-                    pw2 = tkSimpleDialog.askstring("Passphrase", s_RepeatPassword+s_Password, show='*')
+                    pw1 = simpledialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
+                    pw2 = simpledialog.askstring("Passphrase", s_RepeatPassword+s_Password, show='*')
                 p.password = pw1
         p.save_command()
         
@@ -139,11 +135,11 @@ class CryptoPad(Tk):
         if not p.textPad.edit_modified():
             root.destroy()
             return
-        if tkMessageBox.askokcancel(s_Quit, s_QuitMsg):
+        if messagebox.askokcancel(s_Quit, s_QuitMsg):
             root.destroy()
      
     def about_command(p):
-        tkMessageBox.showinfo(s_Info, s_InfoMsg)
+        messagebox.showinfo(s_Info, s_InfoMsg)
 
     def copy_command(p):
         p.clipboard_clear()
