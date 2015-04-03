@@ -205,7 +205,6 @@ elif CRYPTO_KIT == 2:
         cryptodl.RAND_screen()
         if not cryptodl.RAND_bytes(key, 16):
             cryptodl.RAND_pseudo_bytes(key, 16)
-        assert len(key.raw) == 16
         return key.raw
 
     def AE_derive_keys(password, salt):
@@ -214,7 +213,6 @@ elif CRYPTO_KIT == 2:
         keylen = {8:16,12:24,16:32}[len(salt)]
         s = create_string_buffer(2*keylen+2)
         cryptodl.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 2*keylen+2, s)
-        assert len(s.raw) == 2*keylen+2
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(key, s):
@@ -477,7 +475,6 @@ class MiniZipAE1Reader():
         aes_key, hmac_key, chkword = AE_derive_keys(bytes(password,'cp1252'), p.salt)
         if p.chkword != chkword:
             raise Exception("BAD PASSWORD")
-        assert len(p.digest)==10
         if p.digest != AE_hmac_sha1_80(hmac_key, p.blob):
             raise Exception("BAD HMAC-SHA1-80")
         cs = AE_ctr_crypt(aes_key, p.blob)
