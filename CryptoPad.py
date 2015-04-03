@@ -23,7 +23,7 @@ if 0:
     s_RepeatPassword = 'Repeat'
     s_Password = ' the passphrase to encrypt/decrypt the document:'
     s_Quit = 'Quit'
-    s_QuitMsg = 'Do you really want to exit CryptoPad and loose modifications?'
+    s_QuitMsg = 'Do you really want to discard changes to the open document?'
     s_Info = 'About CryptoPad'
     s_InfoMsg = 'CryptoPad 0.1\n\nA simple notepad supporting documents in ZIP AES-256 encrypted format.'
 else:
@@ -49,7 +49,7 @@ else:
     s_Info = 'Informazioni su CryptoPad'
     s_InfoMsg = 'CryptoPad 0.1\n\nUn semplice blocco note che supporta documenti in formato ZIP cifrato con AES-256.'
     s_New = 'Avviso'
-    s_NewMsg = 'Si desidera davvero creare un nuovo documento senza salvare quello corrente?'
+    s_NewMsg = 'Si desidera scartare le modifiche al documento corrente?'
     
 class CryptoPad(Tk):
     def __init__ (p):
@@ -86,6 +86,10 @@ class CryptoPad(Tk):
         p.wm_protocol ("WM_DELETE_WINDOW", p.exit_command)
         
     def open_command(p):
+        if p.textPad.edit_modified():
+            if not tkMessageBox.askokcancel(s_New, s_NewMsg):
+                return
+
         p.PCPfile = tkFileDialog.askopenfile(parent=p, mode='r+b', defaultextension='.etxt', filetypes=[('CryptoPad document', '*.etxt'),], title=s_MenuFileOpen)
         
         if p.PCPfile != None:
@@ -95,6 +99,7 @@ class CryptoPad(Tk):
             zip = MiniZipAE1Reader(p.PCPfile, p.password)
             s = zip.get()
             s = s.replace('\x0D\x0A', '\x0A')
+            p.textPad.delete('1.0', END+'-1c')
             p.textPad.insert('1.0', s)
             p.title(os.path.basename(p.PCPfile.name)[:-5] + s_Title)
             p.textPad.edit_modified(False)
