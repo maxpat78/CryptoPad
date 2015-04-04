@@ -1,10 +1,10 @@
-# A micro reader & writer for AES encrypted ZIP archives
+﻿# A micro reader & writer for AES encrypted ZIP archives
 
 # Encrypts in AES-256, decrypts with smaller keys, too
 
-# Based on Python 2.7 x86. It requires one of the cypto toolkits/libraries:
+# Based on Python x86. It requires one of the cypto toolkits/libraries:
 # pycrypto, libeay from OpenSSL, botan or NSS from Mozilla
-import zlib, struct, time
+import zlib, struct, time, sys
 
 # 0=Nessuno, 1=pycrypto, 2=libeay, 3=botan, 4=nss3
 CRYPTO_KIT = 0
@@ -33,8 +33,10 @@ if not CRYPTO_KIT:
         # implementazioni in Big Endian; inoltre il contatore parte da 1 senza
         # alcun contenuto casuale.
         #
-        # NOTA: la versione C e' veloce quanto quella pycrypto; questa, ibrida,
-        # circa 35 volte piu' lenta!
+        # NOTA: la versione C è veloce quanto quella pycrypto; questa, ibrida,
+        # circa 35 volte più lenta!
+        #
+        # !!!CAVE!!! Su Python 3.4 è circa 1,6x più lenta rispetto a Python 2.7!
         def AES_ctr128_le_crypt(key, s):
             if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
             
@@ -61,7 +63,10 @@ if not CRYPTO_KIT:
                     if p == eobuf: break
                     j+=1
                 if p == eobuf: break
-            return str(bytearray(buf))
+            if sys.version_info >= (3,0):
+                return bytes(buf)
+            else:
+                return str(bytearray(buf))
 
         # Se presente, sostituisce con la versione C
         import _libeay
@@ -79,7 +84,7 @@ if not CRYPTO_KIT:
             if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
 
             cipher = c_void_p(0)
-            cryptodl.botan_cipher_init(byref(cipher), 'AES-256/ECB', 0)
+            cryptodl.botan_cipher_init(byref(cipher), b'AES-256/ECB', 0)
             cryptodl.botan_cipher_set_key(cipher, key, len(key))
             
             buf = (c_byte*len(s)).from_buffer_copy(s)
@@ -102,9 +107,13 @@ if not CRYPTO_KIT:
                     if p == eobuf: break
                     j+=1
                 if p == eobuf: break
-            return str(bytearray(buf))
+            if sys.version_info >= (3,0):
+                return bytes(buf)
+            else:
+                return str(bytearray(buf))
     except:
         pass
+
 
 if not CRYPTO_KIT:
     try:
@@ -128,7 +137,7 @@ if not CRYPTO_KIT:
             
             ki = SECItemStr()
             ki.SECItemType = 0 # type siBuffer
-            # Esiste un modo migliore? Purtroppo .data non puo' essere c_char_p
+            # Esiste un modo migliore? Purtroppo .data non può essere c_char_p
             # in quanto troncherebbe al primo NULL
             ki.data = (c_char*len(key)).from_buffer_copy(key)
             ki.len = len(key)
@@ -164,13 +173,16 @@ if not CRYPTO_KIT:
             cryptodl.PK11_FreeSymKey(sk)
             cryptodl.PK11_FreeSlot(slot)
 
-            return str(bytearray(buf))
+            if sys.version_info >= (3,0):
+                return bytes(buf)
+            else:
+                return str(bytearray(buf))
     except:
         pass
         
 
 if not CRYPTO_KIT:
-    raise Exception("CAN'T RUN - NONE OF THE SUPPORTED CRYPTO KIT IS PRESENT!")
+    raise Exception("CAN'T RUN - NO CRYPTO KITS")
 
     
 if CRYPTO_KIT == 1:
@@ -182,6 +194,8 @@ if CRYPTO_KIT == 1:
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
        e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
+        if sys.version_info >= (3,0):
+            password = bytes(password, 'utf8')
         s = PBKDF2(password, salt, 2*keylen+2)
         return s[:keylen], s[keylen:2*keylen], s[2*keylen:]
 
@@ -211,6 +225,8 @@ elif CRYPTO_KIT == 2:
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
         e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
+        if sys.version_info >= (3,0):
+            password = bytes(password, 'utf8')
         s = create_string_buffer(2*keylen+2)
         cryptodl.PKCS5_PBKDF2_HMAC_SHA1(password, len(password), salt, len(salt), 1000, 2*keylen+2, s)
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
@@ -221,16 +237,18 @@ elif CRYPTO_KIT == 2:
 
     def AE_hmac_sha1_80(key, s):
         "Autentica con HMAC-SHA1-80"
-        digest = cryptodl.HMAC(cryptodl.EVP_sha1(), key, len(key), s, len(s), 0, 0);    
-        return string_at(digest)[:10]
-    
+        digest = cryptodl.HMAC(cryptodl.EVP_sha1(), key, len(key), s, len(s), 0, 0)
+        # BUG! string_at tronca al primo NULL
+        #~ return string_at(digest)[:10]
+        return cast(digest, POINTER(c_char*10)).contents.raw
+        
 elif CRYPTO_KIT == 3:
 
     def AE_gen_salt():
         "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
         rng = c_void_p(0)
-        cryptodl.botan_rng_init(byref(rng), 'system')
+        cryptodl.botan_rng_init(byref(rng), b'system')
         cryptodl.botan_rng_get(rng, key, c_size_t(16))
         return key.raw
 
@@ -238,8 +256,10 @@ elif CRYPTO_KIT == 3:
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
         e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
+        if sys.version_info >= (3,0):
+            password = bytes(password, 'utf8')
         s = create_string_buffer(2*keylen+2)
-        cryptodl.botan_pbkdf('PBKDF2(SHA-1)', s, 2*keylen+2, password, salt, len(salt), 1000)
+        cryptodl.botan_pbkdf(b'PBKDF2(SHA-1)', s, 2*keylen+2, password, salt, len(salt), 1000)
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(key, s):
@@ -250,11 +270,13 @@ elif CRYPTO_KIT == 3:
         "Autentica con HMAC-SHA1-80"
         digest = create_string_buffer(20)
         mac = c_void_p(0)
-        cryptodl.botan_mac_init(byref(mac), 'HMAC(SHA-1)', 0)
+        cryptodl.botan_mac_init(byref(mac), b'HMAC(SHA-1)', 0)
         cryptodl.botan_mac_set_key(mac, key, len(key))
         cryptodl.botan_mac_update(mac, s, len(s))
         cryptodl.botan_mac_final(mac, digest)
-        return string_at(digest)[:10]
+        # BUG! string_at tronca al primo NULL
+        #~ return string_at(digest)[:10]
+        return cast(digest, POINTER(c_char*10)).contents.raw
 
 elif CRYPTO_KIT == 4:
     
@@ -268,6 +290,8 @@ elif CRYPTO_KIT == 4:
         "Con la password ZIP e il salt casuale, genera le chiavi per AES \
       e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
+        if sys.version_info >= (3,0):
+            password = bytes(password, 'utf8')
         
         si = SECItemStr()
         si.SECItemType = 0 # type siBuffer
@@ -417,7 +441,10 @@ class MiniZipAE1Writer():
         
     def append(p, entry, s):
         # Nome del file da aggiungere
-        p.entry = entry
+        if sys.version_info >= (3,0):
+            p.entry = bytes(entry, 'utf8')
+        else:
+            p.entry = entry
         # Calcola il CRC-32 sui dati originali
         p.crc32 = zlib.crc32(s) & 0xFFFFFFFF
         # Comprime, cifra e calcola l'hash sul cifrato
@@ -448,7 +475,7 @@ class MiniZipAE1Writer():
         dt = time.localtime()
         p.dosdate = (dt[0] - 1980) << 9 | dt[1] << 5 | dt[2]
         p.dostime = dt[3] << 11 | dt[4] << 5 | (dt[5] // 2)
-        return 'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, p.dostime, p.dosdate, p.crc32, p.csize, p.usize, len(p.entry), 11) + p.entry + p.AEH()
+        return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, p.dostime, p.dosdate, p.crc32, p.csize, p.usize, len(p.entry), 11) + p.entry + p.AEH()
 
     def AEH(p, method=8, version=1):
         # version=2 (AE-2) non registra il CRC-32, AE-1 lo fa
@@ -456,13 +483,15 @@ class MiniZipAE1Writer():
         return struct.pack('<4HBH', 0x9901, 7, version, 0x4541, 3, method)
 
     def PK0102(p):
-        return 'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, p.dostime, p.dosdate, p.crc32, p.csize, p.usize, len(p.entry), 11, 0, 0, 0, 0x20, 0) + p.entry + p.AEH()
+        return b'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, p.dostime, p.dosdate, p.crc32, p.csize, p.usize, len(p.entry), 11, 0, 0, 0, 0x20, 0) + p.entry + p.AEH()
 
     def PK0506(p, cdirsize, offs):
         if hasattr(p, 'zipcomment'):
-            return 'PK\x05\x06' + struct.pack('<4H2IH', 0, 0, 1, 1, cdirsize, offs, len(p.zipcomment)) + p.zipcomment
+            if sys.version_info >= (3,0):
+                p.zipcomment = bytes(p.zipcomment, 'utf8')
+            return b'PK\x05\x06' + struct.pack('<4H2IH', 0, 0, 1, 1, cdirsize, offs, len(p.zipcomment)) + p.zipcomment
         else:
-            return 'PK\x05\x06' + struct.pack('<4H2IH', 0, 0, 1, 1, cdirsize, offs, 0)
+            return b'PK\x05\x06' + struct.pack('<4H2IH', 0, 0, 1, 1, cdirsize, offs, 0)
 
 
 class MiniZipAE1Reader():
@@ -494,7 +523,7 @@ class MiniZipAE1Reader():
         
     def parse(p):
         p.rewind()
-        if p.fp.read(4) != 'PK\x03\x04':
+        if p.fp.read(4) != b'PK\x03\x04':
             raise Exception("BAD LOCAL HEADER")
         ver1, flag, method, dtime, ddate, crc32, csize, usize, namelen, xhlen = struct.unpack('<5H3I2H', p.fp.read(26))
         #~ print ver1, flag, method, hex(dtime), hex(ddate), hex(crc32), csize, usize, namelen, xhlen
@@ -526,14 +555,14 @@ class MiniZipAE1Reader():
 
 
 if __name__ == '__main__':
-    import StringIO
-    f = StringIO.StringIO()
+    import io
+    f = io.BytesIO()
     zip = MiniZipAE1Writer(f, 'password')
-    zip.append('a.txt', 999*'CIAO')
+    zip.append('a.txt', 2155*b'CIAO')
     zip.write()
     
     f.seek(0,0)
 
     zip = MiniZipAE1Reader(f, 'password')
-    assert 999*'CIAO' == zip.get()
-    print 'TEST PASSED!'
+    assert 2155*b'CIAO' == zip.get()
+    print('TEST PASSED!')
