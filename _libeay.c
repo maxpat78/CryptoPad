@@ -53,13 +53,30 @@ PyObject *self, *args;
 
 static PyMethodDef _libeay_methods[] =
 {
- {"AES_ctr128_le_crypt", p_AES_ctr128_le_crypt, METH_VARARGS, "AES_ctr128_le_crypt(key, s)"},
+ {"AES_ctr128_le_crypt", p_AES_ctr128_le_crypt, METH_VARARGS, "Encrypts with AES CTR-LE"},
  {NULL, NULL, 0, NULL}
 };
 
+
+#if PY_MAJOR_VERSION > 2
+static struct PyModuleDef _libeay_module = {
+   PyModuleDef_HEAD_INIT,
+   "_libeay",   /* name of module */
+   NULL, /* module documentation, may be NULL */
+   -1,       /* size of per-interpreter state of the module,
+                or -1 if the module keeps state in global variables. */
+   _libeay_methods
+};
+
+PyMODINIT_FUNC PyInit__libeay()
+{
+ return PyModule_Create(&_libeay_module);
+}
+#else
 __declspec(dllexport)
 void
 init_libeay()
 {
  Py_InitModule("_libeay", _libeay_methods);
 }
+#endif
