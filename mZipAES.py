@@ -122,7 +122,8 @@ class Crypto_OpenSSL:
         "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
         p.handle.RAND_poll()
-        p.handle.RAND_screen()
+        if sys.platform == 'win32':
+            p.handle.RAND_screen()
         if not p.handle.RAND_bytes(key, 16):
             p.handle.RAND_pseudo_bytes(key, 16)
         return key.raw
@@ -144,22 +145,20 @@ class Crypto_OpenSSL:
     def AE_hmac_sha1_80(p, key, s):
         "Autentica con HMAC-SHA1-80"
         digest = p.handle.HMAC(p.handle.EVP_sha1(), key, len(key), s, len(s), 0, 0)
-        # BUG! string_at tronca al primo NULL
-        #~ return string_at(digest)[:10]
         return cast(digest, POINTER(c_char*10)).contents.raw
 
 
 
 
 class Crypto_Botan:
-    KitName = 'Botan 1.16+'
+    KitName = 'Botan 1.11.16+'
     
     def __init__(p):
         p.loaded = 0
         try:
             if sys.platform != 'win32':
                 # ...or whatever/wherever
-                p.handle = CDLL('libbotan-1.10.so')
+                p.handle = CDLL('libbotan-1.11.so')
             else:
                 p.handle = CDLL('botan')
             p.loaded = 1
@@ -229,8 +228,6 @@ class Crypto_Botan:
         p.handle.botan_mac_set_key(mac, key, len(key))
         p.handle.botan_mac_update(mac, s, len(s))
         p.handle.botan_mac_final(mac, digest)
-        # BUG! string_at tronca al primo NULL
-        #~ return string_at(digest)[:10]
         return cast(digest, POINTER(c_char*10)).contents.raw
     
 
@@ -261,7 +258,8 @@ class Crypto_NSS:
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
         
-        # In nss\lib\util\pkcs11t.h: CKM_AES_ECB = 0x1081
+        # In nss\lib\util\pkcs11t.h:
+        # CKM_AES_ECB = 0x1081
         slot = self.handle.PK11_GetBestSlot(0x1081, 0)
         
         ki = self.SECItemStr()
@@ -358,8 +356,8 @@ class Crypto_NSS:
         ki.len = len(key)
 
         # In lib\util\pkcs11t.h
-        #define CKM_SHA_1_HMAC         0x00000221
-        #define CKA_SIGN               0x00000108
+        # CKM_SHA_1_HMAC = 0x00000221
+        # CKA_SIGN = 0x00000108
         slot = p.handle.PK11_GetBestSlot(0x221, 0)
         # PK11_OriginUnwrap = 4
         sk = p.handle.PK11_ImportSymKey(slot, 0x221, 4, 0x108, byref(ki), 0)
@@ -643,10 +641,9 @@ if __name__ == '__main__':
         print(' + AES encryption')
         try:
             assert o.AE_ctr_crypt(salt, pw) == b'\x8A\x8Ar\xFB\xFAA\xE0\xCA'
+            T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
+            print('AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
         except:
             print('   FAILED.')
-
-        T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
-        print('AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
 
     print('DONE.')
