@@ -23,6 +23,9 @@ PyObject *self, *args;
 {
 	char ctr_counter_le[16];
 	char ctr_encrypted_counter[16];
+#ifdef BYTE_ORDER_1234
+	char ctr_counter_be[16];
+#endif
 	char* p = ctr_encrypted_counter;
 	char* q = p+8;
 	char *key, *buf, *pbuf;
@@ -33,28 +36,38 @@ PyObject *self, *args;
 		AES_set_encrypt_key(key, key_len*8, &aes_key) < 0 )
 		return Py_BuildValue("s", NULL);
 
+#ifdef BYTE_ORDER_1234
+	memset(ctr_counter_be, 0, 16);
+#else
 	memset(ctr_counter_le, 0, 16);
-
+#endif
+	
 	/* Lavora su una copia del buffer originale */
 	pbuf = PyMem_Malloc(buf_len);
 	memcpy(pbuf, buf, buf_len);
 	buf = pbuf;
 
 	for (i=0; i < buf_len/16; i++) {
-#ifdef BYTE_ORDER_1234
-		betole64(&ctr_counter_le);
-#endif
+#ifndef BYTE_ORDER_1234
 		(*((unsigned long long*) ctr_counter_le))++;
+#else	
+		(*((unsigned long long*) ctr_counter_be))++;
+		*((unsigned long long*) ctr_counter_le) = *((unsigned long long*) ctr_counter_be);
+		betole64((unsigned long long*)ctr_counter_le);
+#endif
 		AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, &aes_key, 1);
 		*((unsigned long long*) buf)++ ^= *((unsigned long long*) p);
 		*((unsigned long long*) buf)++ ^= *((unsigned long long*) q);
 	}
 
 	if ((i = buf_len%16)) {
-#ifdef BYTE_ORDER_1234
-		betole64(&ctr_counter_le);
-#endif
+#ifndef BYTE_ORDER_1234
 		(*((unsigned long long*) ctr_counter_le))++;
+#else	
+		(*((unsigned long long*) ctr_counter_be))++;
+		*((unsigned long long*) ctr_counter_le) = *((unsigned long long*) ctr_counter_be);
+		betole64((unsigned long long*)ctr_counter_le);
+#endif
 		AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, &aes_key, 1);
 		while (i--)
 			*buf++ ^= *p++;
