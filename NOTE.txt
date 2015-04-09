@@ -1,0 +1,38 @@
+Diversi costrutti di AES_ctr128_le_crypt a confronto (su Intel Core Duo T2060, Python 2.7):
+
+1) ~855 KiB/s
+for i in range(len(s)):
+    if not i%16:
+        cnt += 1
+        struct.pack_into('<Q', ctr, 0, cnt)
+        self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+    buf[i] ^= pectr[i%16]
+
+2) ~906 KiB/s
+for i in range(len(s)):
+    if j == 0:
+        cnt += 1
+        struct.pack_into('<Q', ctr, 0, cnt)
+        self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+    buf[i] ^= pectr[j]
+    j+=1
+    if j == 16:
+        j = 0
+
+3) ~925 KiB/s
+for i in range(len(s)):
+    j=i%16
+    if not j:
+        cnt += 1
+        struct.pack_into('<Q', ctr, 0, cnt)
+        self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+    buf[i] ^= pectr[j]
+
+4) ~960 KiB/s
+for i in xrange(len(s)):
+    j=i%16
+    if not j:
+        cnt += 1
+        struct.pack_into('<Q', ctr, 0, cnt)
+        self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+    buf[i] ^= pectr[j]

@@ -5,8 +5,11 @@
 # Based on Python x86. It requires one of the cypto toolkits/libraries:
 # pycrypto, libeay (libcrypto) from OpenSSL, botan or (lib)NSS3 from Mozilla
 from __future__ import print_function
-import zlib, struct, time, sys
+import zlib, struct, time, sys, itertools
 from ctypes import *
+
+if sys.version_info < (3,0):
+    range = xrange
 
 try:
     from Crypto.Cipher import AES
@@ -17,15 +20,11 @@ try:
 except:
     PYCRYPTOAVAILABLE=0
 
-
-
 class Crypto_PyCrypto:
     KitName = 'pycrypto 2.6+'
     
     def __init__(p):
-        p.loaded = 0
-        if PYCRYPTOAVAILABLE:
-            p.loaded = 1
+        p.loaded = PYCRYPTOAVAILABLE
 
     def AE_gen_salt(p):
         "Genera 128 bit casuali di salt per AES-256"
@@ -94,25 +93,19 @@ class Crypto_OpenSSL:
         self.handle.AES_set_encrypt_key(key, len(key)*8, AES_KEY)
         
         buf = (c_byte*len(s)).from_buffer_copy(s)
-        p = base = addressof(buf)
-        eobuf = base+len(s)
         
         ctr = create_string_buffer(16)
         ectr = create_string_buffer(16)
         pectr = cast(ectr, POINTER(c_byte))
-        i = 1
-        while 1:
-            # Veloce quanto l'assegnazione a puntatore: MA rispetta l'endianness
-            struct.pack_into('<Q', ctr, 0, i)
-            i+=1
-            self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
-            j = 0
-            while j < 16:
-                buf[p-base] ^= pectr[j]
-                p+=1
-                if p == eobuf: break
-                j+=1
-            if p == eobuf: break
+        cnt = 0
+        j = 0
+        for i in range(len(s)):
+            j=i%16
+            if not j:
+                cnt += 1
+                struct.pack_into('<Q', ctr, 0, cnt)
+                self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+            buf[i] ^= pectr[j]
         if sys.version_info >= (3,0):
             return bytes(buf)
         else:
@@ -174,25 +167,19 @@ class Crypto_Botan:
         self.handle.botan_cipher_set_key(cipher, key, len(key))
         
         buf = (c_byte*len(s)).from_buffer_copy(s)
-        p = base = addressof(buf)
-        eobuf = base+len(s)
-        
         ctr = create_string_buffer(16)
         ectr = create_string_buffer(16)
         pectr = cast(ectr, POINTER(c_byte))
-        i = 1
-        while 1:
-            struct.pack_into('<Q', ctr, 0, i)
-            i+=1
-            o0, i0 = c_size_t(0), c_size_t(0)
-            self.handle.botan_cipher_update(cipher, c_uint32(1), ectr, 16, byref(o0), ctr, 16, byref(i0))
-            j = 0
-            while j < 16:
-                buf[p-base] ^= pectr[j]
-                p+=1
-                if p == eobuf: break
-                j+=1
-            if p == eobuf: break
+        cnt = 0
+        j = 0
+        for i in range(len(s)):
+            j=i%16
+            if not j:
+                cnt += 1
+                struct.pack_into('<Q', ctr, 0, cnt)
+                o0, i0 = c_size_t(0), c_size_t(0)
+                self.handle.botan_cipher_update(cipher, c_uint32(1), ectr, 16, byref(o0), ctr, 16, byref(i0))
+            buf[i] ^= pectr[j]
         if sys.version_info >= (3,0):
             return bytes(buf)
         else:
@@ -276,26 +263,19 @@ class Crypto_NSS:
         ctxt = self.handle.PK11_CreateContextBySymKey(0x1081, 0x104, sk, sp)
         
         buf = (c_byte*len(s)).from_buffer_copy(s)
-        p = base = addressof(buf)
-        eobuf = base+len(s)
-        
         ctr = create_string_buffer(16)
         ectr = create_string_buffer(16)
         pectr = cast(ectr, POINTER(c_byte))
         olen = c_uint32(0)
-        i = 1
-        while 1:
-            struct.pack_into('<Q', ctr, 0, i)
-            i+=1
-            self.handle.PK11_CipherOp(ctxt, ectr, byref(olen), 16, ctr, 16)
-            j = 0
-            while j < 16:
-                buf[p-base] ^= pectr[j]
-                p+=1
-                if p == eobuf: break
-                j+=1
-            if p == eobuf: break
-
+        cnt = 0
+        j = 0
+        for i in range(len(s)):
+            j=i%16
+            if not j:
+                cnt += 1
+                struct.pack_into('<Q', ctr, 0, cnt)
+                self.handle.PK11_CipherOp(ctxt, ectr, byref(olen), 16, ctr, 16)
+            buf[i] ^= pectr[j]
         self.handle.PK11_DestroyContext(ctxt, 1)
         self.handle.PK11_FreeSymKey(sk)
         self.handle.PK11_FreeSlot(slot)
