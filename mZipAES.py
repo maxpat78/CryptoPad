@@ -53,7 +53,7 @@ class Crypto_PyCrypto:
 
 
 class Crypto_OpenSSL:
-    KitName = 'OpenSSL 1.0.2+'
+    KitName = 'OpenSSL 1.1.0' # Minimum tested was 1.0.2
     
     def __init__(p):
         p.loaded = 0
@@ -62,7 +62,8 @@ class Crypto_OpenSSL:
                 # ...or whatever/wherever
                 p.handle = CDLL('libcrypto.so.1.0.0')
             else:
-                p.handle = CDLL('libeay32')
+                p.handle = CDLL('libcrypto-1_1')
+                #~ p.handle = CDLL('libeay32') # openssl < 1.1.0
             p.loaded = 1
         except:
             pass

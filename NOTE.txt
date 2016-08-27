@@ -1,4 +1,4 @@
-Diversi costrutti di AES_ctr128_le_crypt a confronto (su Intel Core Duo T2060, Python 2.7):
+Diversi costrutti di AES_ctr128_le_crypt a confronto (su Intel Core Duo T2060, Python 2.7, 16 MiB test):
 
 1) ~855 KiB/s
 for i in range(len(s)):
@@ -36,3 +36,22 @@ for i in xrange(len(s)):
         struct.pack_into('<Q', ctr, 0, cnt)
         self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
     buf[i] ^= pectr[j]
+
+5) ~1300 KiB/s (nuitka 0.5.11.2, MSVC)
+<same code as 4>
+
+6) ~144 (!) KiB/s (pypy)
+<same code as 4>
+
+4b) ~970 KiB/s
+fuAES = self.handle.AES_ecb_encrypt
+for i in range(len(s)):
+    j=i%16
+    if not j:
+        cnt += 1
+        struct.pack_into('<Q', ctr, 0, cnt)
+        fuAES(ctr, ectr, AES_KEY, 1)
+    buf[i] ^= pectr[j]
+
+5b) ~1350 KiB/s (nuitka 0.5.11.2, MSVC)
+<same code as 4b>
