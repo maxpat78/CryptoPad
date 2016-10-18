@@ -4,8 +4,11 @@
 
 # Based on Python x86. It requires one of the cypto toolkits/libraries:
 # pycrypto, libeay (libcrypto) from OpenSSL, botan or (lib)NSS3 from Mozilla
+
+# TODO: use ctypes.util.find_library
+
 from __future__ import print_function
-import zlib, struct, time, sys, itertools
+import zlib, struct, time, sys
 from ctypes import *
 
 if sys.version_info < (3,0):
@@ -53,7 +56,7 @@ class Crypto_PyCrypto:
 
 
 class Crypto_OpenSSL:
-    KitName = 'OpenSSL 1.1.0' # Minimum tested was 1.0.2
+    KitName = 'OpenSSL 1.0.2+'
     
     def __init__(p):
         p.loaded = 0
@@ -62,8 +65,7 @@ class Crypto_OpenSSL:
                 # ...or whatever/wherever
                 p.handle = CDLL('libcrypto.so.1.0.0')
             else:
-                p.handle = CDLL('libcrypto-1_1')
-                #~ p.handle = CDLL('libeay32') # openssl < 1.1.0
+                p.handle = CDLL('libcrypto-1_1') or CDLL('libeay32')
             p.loaded = 1
         except:
             pass
@@ -89,7 +91,9 @@ class Crypto_OpenSSL:
     # !!!CAVE!!! Su Python 3.4 è circa 1,6x più lenta rispetto a Python 2.7!
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
-        
+        #~ # This slows down to 755 K/s
+        #~ self.handle.AES_ecb_encrypt.argtypes = [c_char_p, c_char_p, c_void_p, c_int]        
+        #~ self.handle.AES_ecb_encrypt.restype = [c_int]        
         AES_KEY = create_string_buffer(244)
         self.handle.AES_set_encrypt_key(key, len(key)*8, AES_KEY)
         
@@ -100,12 +104,13 @@ class Crypto_OpenSSL:
         pectr = cast(ectr, POINTER(c_byte))
         cnt = 0
         j = 0
+        fuAES = self.handle.AES_ecb_encrypt
         for i in range(len(s)):
             j=i%16
             if not j:
                 cnt += 1
                 struct.pack_into('<Q', ctr, 0, cnt)
-                self.handle.AES_ecb_encrypt(ctr, ectr, AES_KEY, 1)
+                fuAES(ctr, ectr, AES_KEY, 1)
             buf[i] ^= pectr[j]
         if sys.version_info >= (3,0):
             return bytes(buf)
@@ -173,13 +178,16 @@ class Crypto_Botan:
         pectr = cast(ectr, POINTER(c_byte))
         cnt = 0
         j = 0
+        o0 = byref(c_size_t(0))
+        i0 = byref(c_size_t(0))
+        u = c_uint32(1)
+        fuAES = self.handle.botan_cipher_update
         for i in range(len(s)):
             j=i%16
             if not j:
                 cnt += 1
                 struct.pack_into('<Q', ctr, 0, cnt)
-                o0, i0 = c_size_t(0), c_size_t(0)
-                self.handle.botan_cipher_update(cipher, c_uint32(1), ectr, 16, byref(o0), ctr, 16, byref(i0))
+                fuAES(cipher, u, ectr, 16, o0, ctr, 16, i0)
             buf[i] ^= pectr[j]
         if sys.version_info >= (3,0):
             return bytes(buf)
@@ -243,6 +251,13 @@ class Crypto_NSS:
         except:
             pass
 
+        # Se presente, sostituisce con la versione C
+        try:
+            import _libnss
+            p.AES_ctr128_le_crypt = _libnss.AES_ctr128_le_crypt
+        except:
+            pass
+
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
         
@@ -270,12 +285,13 @@ class Crypto_NSS:
         olen = c_uint32(0)
         cnt = 0
         j = 0
+        fuAES = self.handle.PK11_CipherOp
         for i in range(len(s)):
             j=i%16
             if not j:
                 cnt += 1
                 struct.pack_into('<Q', ctr, 0, cnt)
-                self.handle.PK11_CipherOp(ctxt, ectr, byref(olen), 16, ctr, 16)
+                fuAES(ctxt, ectr, byref(olen), 16, ctr, 16)
             buf[i] ^= pectr[j]
         self.handle.PK11_DestroyContext(ctxt, 1)
         self.handle.PK11_FreeSymKey(sk)
@@ -591,7 +607,7 @@ if __name__ == '__main__':
     salt = b'\x01' + b'\x00'*15
     pw = b'password'
 
-    for C in (Crypto_PyCrypto, Crypto_OpenSSL, Crypto_Botan, Crypto_NSS):
+    for C in (Crypto_PyCrypto, Crypto_NSS, Crypto_OpenSSL, Crypto_Botan):
         try:
             o = C()
             if o.loaded:
