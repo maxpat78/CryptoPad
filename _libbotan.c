@@ -46,6 +46,8 @@ PyObject *self, *args;
 		case 32:
 			mode = "AES-256/ECB";
 			break;
+		default:
+			return Py_BuildValue("s", NULL);
 	}
 
 	botan_cipher_init(&cipher, mode, 0);
@@ -96,7 +98,7 @@ PyObject *self, *args;
 
 static PyMethodDef _libbotan_methods[] =
 {
- {"AES_ctr128_le_crypt", p_AES_ctr128_le_crypt, METH_VARARGS, "Encrypts with AES CTR-LE"},
+ {"AES_ctr128_le_crypt", p_AES_ctr128_le_crypt, METH_VARARGS, "Encrypts with AES CTR-LE (via Botan)"},
  {NULL, NULL, 0, NULL}
 };
 
