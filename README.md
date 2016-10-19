@@ -18,7 +18,7 @@ The well known AE-1 specification from WinZip[1] is implemented, so one of the f
 - Botan[4]
 - NSS3 from Mozilla[5]
 
-_libeay.c and _libnss.c provide a C version of AES-256 CTR Little-Endian encryption performed by AE-1, openssl and NSS based respectively.
+_libeay.c, _libnss.c and _libbotan.c provide a C version of AES-256 CTR Little-Endian encryption performed by AE-1.
  
 
 

@@ -164,6 +164,14 @@ class Crypto_Botan:
         except:
             pass
 
+        # Se presente, sostituisce con la versione C
+        try:
+            import _libbotan
+            p.AES_ctr128_le_crypt = _libbotan.AES_ctr128_le_crypt
+        except:
+            pass
+
+
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
 
@@ -607,7 +615,7 @@ if __name__ == '__main__':
     salt = b'\x01' + b'\x00'*15
     pw = b'password'
 
-    for C in (Crypto_PyCrypto, Crypto_NSS, Crypto_OpenSSL, Crypto_Botan):
+    for C in (Crypto_Botan, Crypto_PyCrypto, Crypto_NSS, Crypto_OpenSSL):
         try:
             o = C()
             if o.loaded:
@@ -637,6 +645,8 @@ if __name__ == '__main__':
 
         print(' + AES encryption')
         try:
+            # i7-6500U (hybrid): ~3 MB/s all except pycrypto
+            # i7-6500U (C wrapper): Botan ~180 MB/s, pycrypto ~116 MB/s, NSS ~93 MB/s, openssl ~85 MB/s
             assert o.AE_ctr_crypt(salt, pw) == b'\x8A\x8Ar\xFB\xFAA\xE0\xCA'
             T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
             print('AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
