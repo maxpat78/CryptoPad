@@ -14,11 +14,11 @@ File contents are also deflated before encryption.
 The well known AE-1 specification from WinZip[1] is implemented, so one of the following cryptographic toolkits/libraries is required to run the app:
 
 - Python Cryptography Toolkit pycrypto[2]
-- libeay32/libcrypto from OpenSSL[3]
+- libeay32/libcrypto from OpenSSL[3] or LibreSSL[6]
 - Botan[4]
 - NSS3 from Mozilla[5]
 
-_libeay.c, _libnss.c and _libbotan.c provide a C version of AES-256 CTR Little-Endian encryption performed by AE-1.
+_libeay.c, _libnss.c and _libbotan.c provide C versions of AES-256 CTR Little-Endian encryption performed by AE-1.
  
 
 
@@ -31,4 +31,6 @@ _libeay.c, _libnss.c and _libbotan.c provide a C version of AES-256 CTR Little-E
 [4] See http://botan.randombit.net/
 
 [5] See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS
+
+[6] See https://www.libressl.org/
 
