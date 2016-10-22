@@ -3,8 +3,8 @@
 # Encrypts in AES-256, decrypts with smaller keys, too
 
 # Based on Python x86. It requires one of the cypto toolkits/libraries:
-# pycrypto, libeay (libcrypto) from OpenSSL (or libcrypto from LibreSSL),
-# botan or (lib)NSS3 from Mozilla
+# pycrypto, libeay (libcrypto) from OpenSSL (or LibreSSL), botan or
+# (lib)NSS3 from Mozilla
 
 # TODO: use ctypes.util.find_library
 
@@ -64,14 +64,14 @@ class Crypto_OpenSSL:
         try:
             if sys.platform != 'win32':
                 # ...or whatever/wherever
-                p.handle = CDLL('libcrypto.so.1.0.0')
+                p.handle = CDLL('libcrypto.so') or CDLL('libcrypto.so.1.0.0')
             else:
-                p.handle = CDLL('libcrypto-1_1') or CDLL('libeay32') # or  CDLL('libcrypto-38')
+                p.handle = CDLL('libcrypto-1_1') or CDLL('libeay32') or  CDLL('libcrypto-38')
             p.loaded = 1
         except:
             pass
 
-        # Se presente, sostituisce con la versione C (OpenSSL or LibreSSL)
+        # Se presente, sostituisce con la versione C
         try:
             import _libeay
             p.AES_ctr128_le_crypt = _libeay.AES_ctr128_le_crypt
@@ -240,7 +240,7 @@ class Crypto_Botan:
 class Crypto_NSS:
     KitName = 'Mozilla NSS3'
     
-    # In lib\util\seccommon.h
+    # In lib\util\seccomon.h
     class SECItemStr(Structure):
         _fields_ = [('SECItemType', c_uint), ('data', POINTER(c_char)), ('len', c_uint)]
 
@@ -623,6 +623,7 @@ if __name__ == '__main__':
                 print('Testing ', o.KitName)
             else:
                 print(o.KitName, ' not available.')
+                continue
         except:
             continue
         
@@ -641,6 +642,8 @@ if __name__ == '__main__':
         print(' + hmac_sha1_80 authentication')
         try:
             assert o.AE_hmac_sha1_80(salt, pw) == b'j|\xB9\xA9\xEE3#\x00|\x17'
+            T = timeit.timeit('o.AE_hmac_sha1_80(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
+            print('   AE_hmac_sha1_80 performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
         except:
             print('   FAILED.')
 
@@ -650,7 +653,7 @@ if __name__ == '__main__':
             # i7-6500U (C wrapper): Botan ~180 MB/s, libressl ~175 MB/s, pycrypto ~116 MB/s, NSS ~93 MB/s, openssl ~85 MB/s
             assert o.AE_ctr_crypt(salt, pw) == b'\x8A\x8Ar\xFB\xFAA\xE0\xCA'
             T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
-            print('AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
+            print('   AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
         except:
             print('   FAILED.')
 
