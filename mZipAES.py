@@ -3,8 +3,8 @@
 # Encrypts in AES-256, decrypts with smaller keys, too
 
 # Based on Python x86. It requires one of the cypto toolkits/libraries:
-# pycrypto, libeay (libcrypto) from OpenSSL (or LibreSSL), botan or
-# (lib)NSS3 from Mozilla
+# pycrypto, libeay (libcrypto) from OpenSSL (or LibreSSL), botan,
+# (lib)NSS3 from Mozilla or GNU libgcrypt.
 
 # TODO: use ctypes.util.find_library
 
@@ -383,6 +383,93 @@ class Crypto_NSS:
         return digest.raw[:10]
 
 
+class Crypto_GCrypt:
+    KitName = 'GNU libgcrypt'
+    
+    def __init__(p):
+        p.loaded = 0
+        try:
+            if sys.platform != 'win32':
+                # ...or whatever/wherever
+                p.handle = CDLL('libgcrypt-20.so')
+            else:
+                p.handle = CDLL('libgcrypt-20')
+            p.loaded = 1
+        except:
+            pass
+
+        # Se presente, sostituisce con la versione C
+        try:
+            import _libgcrypt
+            p.AES_ctr128_le_crypt = _libgcrypt.AES_ctr128_le_crypt
+        except:
+            pass
+
+    def AES_ctr128_le_crypt(self, key, s):
+        if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
+
+        hd = c_long(0)
+        
+        # GCRY_CIPHER_AESXXX = 7..9; GCRY_CIPHER_MODE_ECB=1 (OFB=5)
+        self.handle.gcry_cipher_open(byref(hd), len(key)/8+5, 1, 0)
+        self.handle.gcry_cipher_setkey(hd, key, len(key))
+
+        buf = (c_byte*len(s)).from_buffer_copy(s)
+        ctr = create_string_buffer(16)
+        ectr = create_string_buffer(16)
+        pectr = cast(ectr, POINTER(c_byte))
+        cnt = 0
+        j = 0
+        fuAES = self.handle.gcry_cipher_encrypt
+        for i in range(len(s)):
+            j=i%16
+            if not j:
+                cnt += 1
+                struct.pack_into('<Q', ctr, 0, cnt)
+                fuAES(hd, ectr, 16, ctr, 16)
+            buf[i] ^= pectr[j]
+
+        self.handle.gcry_cipher_close(hd)
+
+        if sys.version_info >= (3,0):
+            return bytes(buf)
+        else:
+            return str(bytearray(buf))
+
+    def AE_gen_salt(p):
+        "Genera 128 bit casuali di salt per AES-256"
+        # GCRY_STRONG_RANDOM=1
+        key = (c_char*16).from_address(p.handle.gcry_random_bytes(16, 1))
+        return key.raw
+
+    def AE_derive_keys(p, password, salt):
+        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
+      e HMAC-SHA1-80, e i 16 bit di controllo"
+        keylen = {8:16,12:24,16:32}[len(salt)]
+        if sys.version_info >= (3,0) and type(password)!=type(b''):
+            password = bytes(password, 'utf8')
+        s = create_string_buffer(2*keylen+2)
+        #GCRY_KDF_PBKDF2 = 34; GCRY_MD_SHA1 = 2
+        p.handle. gcry_kdf_derive(password, len(password), 34, 2, salt, len(salt), 1000, 2*keylen+2, s)
+        return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
+
+    def AE_ctr_crypt(p, key, s):
+        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
+        return p.AES_ctr128_le_crypt(key, s)
+
+    def AE_hmac_sha1_80(p, key, s):
+        "Autentica con HMAC-SHA1-80"
+        hd = c_long(0)
+        # GCRY_MAC_HMAC_SHA1=105
+        p.handle.gcry_mac_open(byref(hd), 105, 0, 0)
+        p.handle.gcry_mac_setkey(hd, key, len(key))
+        p.handle.gcry_mac_write(hd, s, len(s))
+        digest = create_string_buffer(20)
+        l = c_long(20)
+        p.handle.gcry_mac_read(hd, digest, byref(l))
+        p.handle.gcry_mac_close(hd)
+        return digest.raw[:10]
+
 
 """Local file header:
 
@@ -616,7 +703,7 @@ if __name__ == '__main__':
     salt = b'\x01' + b'\x00'*15
     pw = b'password'
 
-    for C in (Crypto_Botan, Crypto_PyCrypto, Crypto_NSS, Crypto_OpenSSL):
+    for C in (Crypto_Botan, Crypto_PyCrypto, Crypto_NSS, Crypto_OpenSSL, Crypto_GCrypt):
         try:
             o = C()
             if o.loaded:
