@@ -17,6 +17,7 @@ The well known AE-1 specification from WinZip[1] is implemented, so one of the f
 - libeay32/libcrypto from OpenSSL[3] or LibreSSL[6]
 - Botan[4]
 - NSS3 from Mozilla[5]
+- Libgcrypt from GNU project[7]
 
 _libeay.c, _libnss.c and _libbotan.c provide C versions of AES-256 CTR Little-Endian encryption performed by AE-1.
  
@@ -33,4 +34,6 @@ _libeay.c, _libnss.c and _libbotan.c provide C versions of AES-256 CTR Little-En
 [5] See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS
 
 [6] See https://www.libressl.org/
+
+[7] See https://www.gnu.org/software/libgcrypt/
 

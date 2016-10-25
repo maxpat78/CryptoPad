@@ -3,10 +3,8 @@
 # Encrypts in AES-256, decrypts with smaller keys, too
 
 # Based on Python x86. It requires one of the cypto toolkits/libraries:
-# pycrypto, libeay (libcrypto) from OpenSSL (or LibreSSL), botan,
-# (lib)NSS3 from Mozilla or GNU libgcrypt.
-
-# TODO: use ctypes.util.find_library
+# pycrypto, libeay (libcrypto) from OpenSSL or LibreSSL, botan, (lib)NSS3
+# from Mozilla or GNU libgcrypt.
 
 from __future__ import print_function
 import zlib, struct, time, sys
@@ -66,7 +64,7 @@ class Crypto_OpenSSL:
                 # ...or whatever/wherever
                 p.handle = CDLL('libcrypto.so') or CDLL('libcrypto.so.1.0.0')
             else:
-                p.handle = CDLL('libcrypto-1_1') or CDLL('libeay32') or  CDLL('libcrypto-38')
+                p.handle = CDLL('libcrypto-1_1') or CDLL('libeay32') or CDLL('libcrypto-38')
             p.loaded = 1
         except:
             pass
@@ -149,7 +147,6 @@ class Crypto_OpenSSL:
 
 
 
-
 class Crypto_Botan:
     KitName = 'Botan 1.11.16+'
     
@@ -157,7 +154,6 @@ class Crypto_Botan:
         p.loaded = 0
         try:
             if sys.platform != 'win32':
-                # ...or whatever/wherever
                 p.handle = CDLL('libbotan-1.11.so')
             else:
                 p.handle = CDLL('botan')
@@ -165,13 +161,11 @@ class Crypto_Botan:
         except:
             pass
 
-        # Se presente, sostituisce con la versione C
         try:
             import _libbotan
             p.AES_ctr128_le_crypt = _libbotan.AES_ctr128_le_crypt
         except:
             pass
-
 
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
@@ -248,7 +242,6 @@ class Crypto_NSS:
         p.loaded = 0
         try:
             if sys.platform != 'win32':
-                # ...or whatever/wherever
                 p.handle = CDLL('libnss3.so')
             else:
                 p.handle = CDLL('nss3')
@@ -260,7 +253,6 @@ class Crypto_NSS:
         except:
             pass
 
-        # Se presente, sostituisce con la versione C
         try:
             import _libnss
             p.AES_ctr128_le_crypt = _libnss.AES_ctr128_le_crypt
@@ -383,6 +375,7 @@ class Crypto_NSS:
         return digest.raw[:10]
 
 
+
 class Crypto_GCrypt:
     KitName = 'GNU libgcrypt'
     
@@ -390,7 +383,6 @@ class Crypto_GCrypt:
         p.loaded = 0
         try:
             if sys.platform != 'win32':
-                # ...or whatever/wherever
                 p.handle = CDLL('libgcrypt-20.so')
             else:
                 p.handle = CDLL('libgcrypt-20')
@@ -398,7 +390,6 @@ class Crypto_GCrypt:
         except:
             pass
 
-        # Se presente, sostituisce con la versione C
         try:
             import _libgcrypt
             p.AES_ctr128_le_crypt = _libgcrypt.AES_ctr128_le_crypt
@@ -411,7 +402,7 @@ class Crypto_GCrypt:
         hd = c_long(0)
         
         # GCRY_CIPHER_AESXXX = 7..9; GCRY_CIPHER_MODE_ECB=1 (OFB=5)
-        self.handle.gcry_cipher_open(byref(hd), len(key)/8+5, 1, 0)
+        self.handle.gcry_cipher_open(byref(hd), int(len(key)/8+5), 1, 0)
         self.handle.gcry_cipher_setkey(hd, key, len(key))
 
         buf = (c_byte*len(s)).from_buffer_copy(s)
@@ -549,7 +540,7 @@ NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero.
 
 
 crypto_kit = None
-for C in (Crypto_PyCrypto, Crypto_OpenSSL, Crypto_Botan, Crypto_NSS):
+for C in (Crypto_PyCrypto, Crypto_OpenSSL, Crypto_Botan, Crypto_NSS, Crypto_GCrypt):
     try:
         crypto_kit = C()
         if crypto_kit.loaded:
@@ -707,13 +698,13 @@ if __name__ == '__main__':
         try:
             o = C()
             if o.loaded:
-                print('Testing ', o.KitName)
+                print('Testing', o.KitName)
             else:
-                print(o.KitName, ' not available.')
+                print(o.KitName, 'not available.')
                 continue
         except:
             continue
-        
+
         print(' + random salt generation',)
         try:
             assert len(o.AE_gen_salt()) == 16
