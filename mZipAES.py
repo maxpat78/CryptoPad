@@ -489,10 +489,10 @@ Extended AES header (both local & central) based on WinZip 9 specs:
     actual compression      2 byte   (becomes 0x99 in LENT & CENT)
 
     content data, as follows:
-    random salt (8, 12, 16 byte depending on key size)
-    2-byte password verification value (from PBKDF2)
-    AES-CTR-LE encrypted data
-    10-byte HMAC-SHA1-80 authentication code for encrypted data
+    random salt (8, 12 or 16 byte depending on key size)
+    2-byte password verification value (from PBKDF2 with SHA-1, 1000 rounds)
+    AES encrypted data (CTR mode, little endian counter)
+    10-byte authentication code for encrypted data from HMAC-SHA1
 
 NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero.
 
