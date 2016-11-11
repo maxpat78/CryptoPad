@@ -74,8 +74,14 @@ PyObject *self, *args;
 		betole64((unsigned long long*)ctr_counter_le);
 #endif
 		PK11_CipherOp(ctxt, ctr_encrypted_counter, &olen, 16, ctr_counter_le, 16);
-		*((unsigned long long*) pbuf)++ = *((unsigned long long*) buf)++ ^ *((unsigned long long*) p);
-		*((unsigned long long*) pbuf)++ = *((unsigned long long*) buf)++ ^ *((unsigned long long*) q);
+
+		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) p);
+		pbuf+=sizeof(long long);
+		src+=sizeof(long long);
+
+		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) q);
+		pbuf+=sizeof(long long);
+		src+=sizeof(long long);
 	}
 
 	if ((i = buf_len%16)) {

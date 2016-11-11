@@ -71,8 +71,14 @@ PyObject *self, *args;
 		betole64((unsigned long long*)ctr_counter_le);
 #endif
 		botan_cipher_update(cipher, 1, ctr_encrypted_counter, 16, &olen, ctr_counter_le, 16, &ilen);
-		*((unsigned long long*) pbuf)++ = *((unsigned long long*) buf)++ ^ *((unsigned long long*) p);
-		*((unsigned long long*) pbuf)++ = *((unsigned long long*) buf)++ ^ *((unsigned long long*) q);
+
+		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) p);
+		pbuf+=sizeof(long long);
+		src+=sizeof(long long);
+
+		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) q);
+		pbuf+=sizeof(long long);
+		src+=sizeof(long long);
 	}
 
 	if ((i = buf_len%16)) {

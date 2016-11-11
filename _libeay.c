@@ -54,8 +54,14 @@ PyObject *self, *args;
 		betole64((unsigned long long*)ctr_counter_le);
 #endif
 		AES_ecb_encrypt(ctr_counter_le, ctr_encrypted_counter, &aes_key, 1);
-		*((unsigned long long*) pbuf)++ = *((unsigned long long*) buf)++ ^ *((unsigned long long*) p);
-		*((unsigned long long*) pbuf)++ = *((unsigned long long*) buf)++ ^ *((unsigned long long*) q);
+
+		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) p);
+		pbuf+=sizeof(long long);
+		src+=sizeof(long long);
+
+		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) q);
+		pbuf+=sizeof(long long);
+		src+=sizeof(long long);
 	}
 
 	if ((i = buf_len%16)) {
