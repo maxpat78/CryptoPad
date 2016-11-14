@@ -594,10 +594,7 @@ class MiniZipAE1Writer():
         p.fp.seek(0, 0)
         
     def PK0304(p):
-        dt = time.localtime()
-        p.dosdate = (dt[0] - 1980) << 9 | dt[1] << 5 | dt[2]
-        p.dostime = dt[3] << 11 | dt[4] << 5 | (dt[5] // 2)
-        return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, p.dostime, p.dosdate, p.crc32, p.csize, p.usize, len(p.entry), 11) + p.entry + p.AEH()
+        return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, 0, 33, p.crc32, p.csize, p.usize, 4, 11) + b'data' + p.AEH()
 
     def AEH(p, method=8, version=1):
         # version=2 (AE-2) non registra il CRC-32, AE-1 lo fa
@@ -605,7 +602,7 @@ class MiniZipAE1Writer():
         return struct.pack('<4HBH', 0x9901, 7, version, 0x4541, 3, method)
 
     def PK0102(p):
-        return b'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, p.dostime, p.dosdate, p.crc32, p.csize, p.usize, len(p.entry), 11, 0, 0, 0, 0x20, 0) + p.entry + p.AEH()
+        return b'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, 0, 33, p.crc32, p.csize, p.usize, 4, 11, 0, 0, 0, 0x20, 0) + b'data' + p.AEH()
 
     def PK0506(p, cdirsize, offs):
         if hasattr(p, 'zipcomment'):
