@@ -1,10 +1,9 @@
 """
-    CryptoPad 0.3
+   CryptoPad 0.4
     
-    A simple encrypting Notepad.
-    Saves UTF-8 CR-LF encoded text as ETXT ZIP archive encrypted with AES-256.
-    Uses mZipAES. Both for Python 2.7 & 3.4.
-"""
+   A simple encrypting Notepad.
+   Saves UTF-8 CR-LF encoded text as ZIP archive encrypted with AES-256.
+   Uses mZipAES. Both for Python 2.7 & 3.4."""
 import sys
 
 if sys.version_info >= (3,0): 
@@ -21,7 +20,7 @@ from mZipAES import MiniZipAE1Writer, MiniZipAE1Reader
 import os
 
 s_Document = 'CryptoPad Document'
-VERSION = '0.3'
+VERSION = '0.4'
 
 
 
@@ -109,7 +108,8 @@ class CryptoPad(Tk):
         filemenu.add_separator()
         filemenu.add_command(label=s_MenuFileQuit, command=p.exit_command, underline=0)
 
-        editmenu = Menu(menu, tearoff=0)
+        editmenu = Menu(menu, tearoff=0, postcommand=p.refresh_menu)
+        p.editmenu = editmenu
         menu.add_cascade(label=s_MenuEdit, menu=editmenu)
         editmenu.add_command(label=s_MenuEditUndo, command=p.undo_command, accelerator='CTRL+Z')
         editmenu.add_command(label=s_MenuEditRedo, command=p.redo_command, accelerator='CTRL+Y')
@@ -138,7 +138,7 @@ class CryptoPad(Tk):
             if not messagebox.askokcancel(s_New, s_NewMsg):
                 return
 
-        p.target_etxt = filedialog.askopenfilename(parent=p, defaultextension='.etxt', filetypes=[(s_Document, '*.etxt'),], title=s_MenuFileOpen)
+        p.target_etxt = filedialog.askopenfilename(parent=p, defaultextension='.txt', filetypes=[(s_Document, '*.txt'),], title=s_MenuFileOpen)
         
         if p.target_etxt != '':
             p.password = ''
@@ -149,11 +149,18 @@ class CryptoPad(Tk):
                 zip = MiniZipAE1Reader(pkstream, p.password)
                 s = zip.get()
             if not s: return
-            s = s.decode('utf-8')
+            if len(s) > 3 and s[:3] == b'\xEF\xBB\xBF':
+                s = s.decode('utf-8-sig')
+            elif len(s) > 2:
+                if s[:2] == b'\xFF\xFE':
+                    s = s.decode('utf-16le')
+                elif s[:2] == b'\xFE\xFF':
+                    s = s.decode('utf-16be')
+            # else: is plain ASCII
             s = s.replace('\x0D\x0A', '\x0A')
             p.textPad.delete('1.0', END+'-1c')
             p.textPad.insert('1.0', s)
-            p.title(os.path.basename(p.target_etxt)[:-5] + s_Title)
+            p.title(os.path.basename(p.target_etxt)[:-4] + s_Title)
             p.textPad.edit_modified(False)
             p.textPad.edit_separator()
 
@@ -162,11 +169,11 @@ class CryptoPad(Tk):
             p.saveas_command()
         s = p.textPad.get('1.0', END+'-1c')
         s = s.replace('\x0A', '\x0D\x0A')
-        s = s.encode('utf-8')
+        s = s.encode('utf-8-sig')
         with open(p.target_etxt+'.tmp', 'wb') as pkstream:
             try:
                 zip = MiniZipAE1Writer(pkstream, p.password)
-                zip.append(os.path.basename(p.target_etxt).replace('.etxt','.txt'), s)
+                zip.append('data', s)
                 zip.zipcomment = s_Document
                 zip.write()
                 # Cerca di sostituire l'originale solo in assenza di errori
@@ -177,12 +184,12 @@ class CryptoPad(Tk):
             except:
                 messagebox.showerror(s_Error, s_ErrorSaveMsg)
             else:
-                p.title(os.path.basename(p.target_etxt)[:-5] + s_Title)
+                p.title(os.path.basename(p.target_etxt)[:-4] + s_Title)
                 p.textPad.edit_modified(False)
                 p.textPad.edit_separator()
 
     def saveas_command(p):
-        new_target = filedialog.asksaveasfilename(defaultextension='.etxt', filetypes=[(s_Document, '*.etxt'),], title=s_MenuFileSave)
+        new_target = filedialog.asksaveasfilename(defaultextension='.txt', filetypes=[(s_Document, '*.txt'),], title=s_MenuFileSave)
         if not new_target: return
         p.password = None
         
@@ -208,14 +215,15 @@ class CryptoPad(Tk):
         messagebox.showinfo(s_Info, s_InfoMsg)
 
     def copy_command(p, evt=None):
-        # Windows 8.1 seems to manage the clipboard BEFORE Tkinter
-        if os.name == 'nt': return
+        # Windows 10 intercepts and handles CTRL+[C,X,V] BEFORE Tkinter
+        # But not the MENU command (evt == None)
+        if os.name == 'nt' and evt: return
         p.clipboard_clear()
         text = p.textPad.get("sel.first", "sel.last")
         p.clipboard_append(text)
         
     def paste_command(p, evt=None):
-        if os.name == 'nt': return
+        if os.name == 'nt' and evt: return
         text = p.selection_get(selection='CLIPBOARD')
         p.textPad.insert('insert', text)
 
@@ -231,7 +239,7 @@ class CryptoPad(Tk):
     def cut_command(p, evt=None):
         # In Windows 8.1 .get raises an exception,
         # since selection is ALREADY cut to clipboard!
-        if os.name == 'nt': return
+        if os.name == 'nt' and evt: return
         p.clipboard_clear()
         text = p.textPad.get("sel.first", "sel.last")
         p.clipboard_append(text)
@@ -242,14 +250,20 @@ class CryptoPad(Tk):
         
     def new_command(p, evt=None):
         if p.textPad.edit_modified():
-            if messagebox.askokcancel(s_New, s_NewMsg):
-                p.textPad.delete('1.0', END+'-1c')
-                p.title(s_NewDoc+s_Title)
-                p.textPad.edit_modified(False)
-
-    def dummy(p):
-        pass
-     
+            if not messagebox.askokcancel(s_New, s_NewMsg):
+                return
+        p.textPad.delete('1.0', END+'-1c')
+        p.title(s_NewDoc+s_Title)
+        p.textPad.edit_modified(False)
+        
+    def refresh_menu(p):
+        "Called thanks to postcommand when menu is selected"
+        s = ('active','disabled')[p.textPad.tag_ranges("sel")==()]
+        p.editmenu.entryconfig(s_MenuEditDel, state=s)
+        p.editmenu.entryconfig(s_MenuEditCut, state=s)
+        p.editmenu.entryconfig(s_MenuEditCopy, state=s)
+        p.editmenu.entryconfig(s_MenuEditPaste, state=('active','disabled')[p.clipboard_get()==None])
+        
 
 root = CryptoPad()
 root.mainloop()

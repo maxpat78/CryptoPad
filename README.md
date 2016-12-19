@@ -4,11 +4,11 @@ CryptoPad
 A simple Notepad coded in Python and Tkinter (x86) and tested under Windows 10. It runs with both Python 2.7 and 3.4.
 
 
-It is able to read and write ETXT text documents, which are simple ZIP archives encrypted with AES for maximum security and portability.
+It is able to read and write text documents incapsulated into simple ZIP archives and encrypted with AES for maximum security and portability.
 
-It encrypts always with AES-256 but can decrypt with 128 or 192 bit keys also.
+It encrypts always with AES-256 but can decrypt with 128 or 192-bit keys, too.
 
-File contents are deflated before encryption, too.
+File contents are deflated before encryption.
 
 
 The well known AE-1 specification from WinZip[1] is implemented, so one of the following cryptographic toolkits/libraries is required to run the app:
