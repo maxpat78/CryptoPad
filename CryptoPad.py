@@ -1,5 +1,5 @@
 """
-   CryptoPad 0.4
+   CryptoPad 0.5
     
    A simple encrypting Notepad.
    Saves UTF-8 CR-LF encoded text as ZIP archive encrypted with AES-256.
@@ -20,7 +20,7 @@ from mZipAES import MiniZipAE1Writer, MiniZipAE1Reader
 import os
 
 s_Document = 'CryptoPad Document'
-VERSION = '0.4'
+VERSION = '0.5'
 
 
 
@@ -52,6 +52,7 @@ if 0:
     s_InfoMsg = 'CryptoPad '+VERSION+'\n\nA simple UTF-8 notepad supporting compressed documents in ZIP AES-256 encrypted format.'
     s_Error = 'Error'
     s_ErrorSaveMsg = 'Not saved - There was an error while saving the document!'
+    s_ErrorUnzipMsg = 'Can not load - There was an error while decrypting the document!'
 else:
     s_Title = ' - CryptoPad'
     s_NewDoc = 'Senza nome'
@@ -82,6 +83,7 @@ else:
     s_NewMsg = 'Si desidera scartare le modifiche al documento corrente?'
     s_Error = 'Errore'
     s_ErrorSaveMsg = 'Errore durante il salvataggio del documento!'
+    s_ErrorUnzipMsg = 'Errore nel decifrare il documento!'
     
     
     
@@ -90,7 +92,7 @@ class CryptoPad(Tk):
         Tk.__init__(p)
         p.title(s_NewDoc+s_Title)
         p.textPad = scrolledtext.ScrolledText(p, width=100, height=30, wrap=WORD, exportselection=True, undo=True)
-        p.target_etxt = None
+        p.target_txt = None
         p.password = None
         
         menu = Menu(p, tearoff=0)
@@ -138,53 +140,65 @@ class CryptoPad(Tk):
             if not messagebox.askokcancel(s_New, s_NewMsg):
                 return
 
-        p.target_etxt = filedialog.askopenfilename(parent=p, defaultextension='.txt', filetypes=[(s_Document, '*.txt'),], title=s_MenuFileOpen)
-        
-        if p.target_etxt != '':
-            p.password = ''
-            if not p.password:
-                p.password = simpledialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
-            s = ''
-            with open(p.target_etxt, 'rb') as pkstream:
-                zip = MiniZipAE1Reader(pkstream, p.password)
+        p.target_txt = filedialog.askopenfilename(parent=p, defaultextension='.txt', filetypes=[(s_Document, '*.txt'),], title=s_MenuFileOpen)
+        if p.target_txt == '':
+            return
+
+        s = ''
+        with open(p.target_txt, 'rb') as stream:
+            s = stream.read(4)
+            stream.seek(0)
+            if len(s) == 4 and s == b'PK\x03\x04':
+                p.password = ''
+                if not p.password:
+                    p.password = simpledialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
+                try:
+                    zip = MiniZipAE1Reader(stream, p.password)
+                except:
+                    messagebox.showerror(s_Error, s_ErrorUnzipMsg)
                 s = zip.get()
-            if not s: return
-            if len(s) > 3 and s[:3] == b'\xEF\xBB\xBF':
-                s = s.decode('utf-8-sig')
-            elif len(s) > 2:
-                if s[:2] == b'\xFF\xFE':
-                    s = s.decode('utf-16le')
-                elif s[:2] == b'\xFE\xFF':
-                    s = s.decode('utf-16be')
-            # else: is plain ASCII
-            s = s.replace('\x0D\x0A', '\x0A')
-            p.textPad.delete('1.0', END+'-1c')
-            p.textPad.insert('1.0', s)
-            p.title(os.path.basename(p.target_etxt)[:-4] + s_Title)
-            p.textPad.edit_modified(False)
-            p.textPad.edit_separator()
+            else:
+                s = stream.read()
+        if not s: return
+        if len(s) > 3 and s[:3] == b'\xEF\xBB\xBF':
+            s = s.decode('utf-8-sig')
+        elif len(s) > 2:
+            if s[:2] == b'\xFF\xFE':
+                s = s.decode('utf-16le')
+            elif s[:2] == b'\xFE\xFF':
+                s = s.decode('utf-16be')
+        # else: is plain ASCII
+        # Handles binary files
+        if b'\x00' in s:
+            s = s.replace('\x00', ' ')
+        s = s.replace('\x0D\x0A', '\x0A')
+        p.textPad.delete('1.0', END+'-1c')
+        p.textPad.insert('1.0', s)
+        p.title(os.path.basename(p.target_txt)[:-4] + s_Title)
+        p.textPad.edit_modified(False)
+        p.textPad.edit_separator()
 
     def save_command(p, evt=None):
-        if p.target_etxt == None:
+        if p.target_txt == None:
             p.saveas_command()
         s = p.textPad.get('1.0', END+'-1c')
         s = s.replace('\x0A', '\x0D\x0A')
         s = s.encode('utf-8-sig')
-        with open(p.target_etxt+'.tmp', 'wb') as pkstream:
+        with open(p.target_txt+'.tmp', 'wb') as pkstream:
             try:
                 zip = MiniZipAE1Writer(pkstream, p.password)
                 zip.append('data', s)
                 zip.zipcomment = s_Document
                 zip.write()
                 # Cerca di sostituire l'originale solo in assenza di errori
-                if os.path.exists(p.target_etxt):
-                    os.remove(p.target_etxt)
+                if os.path.exists(p.target_txt):
+                    os.remove(p.target_txt)
                 pkstream.close()
-                os.rename(p.target_etxt+'.tmp', p.target_etxt)
+                os.rename(p.target_txt+'.tmp', p.target_txt)
             except:
                 messagebox.showerror(s_Error, s_ErrorSaveMsg)
             else:
-                p.title(os.path.basename(p.target_etxt)[:-4] + s_Title)
+                p.title(os.path.basename(p.target_txt)[:-4] + s_Title)
                 p.textPad.edit_modified(False)
                 p.textPad.edit_separator()
 
@@ -201,15 +215,14 @@ class CryptoPad(Tk):
             pw2 = simpledialog.askstring("Passphrase", s_RepeatPassword+s_Password, show='*')
 
         p.password = pw1
-        p.target_etxt = new_target
+        p.target_txt = new_target
         p.save_command()
         
     def exit_command(p):
-        if not p.textPad.edit_modified():
-            root.destroy()
-            return
-        if messagebox.askokcancel(s_Quit, s_QuitMsg):
-            root.destroy()
+        if p.textPad.edit_modified():
+            if not messagebox.askokcancel(s_Quit, s_QuitMsg):
+                return
+        root.destroy()
      
     def about_command(p):
         messagebox.showinfo(s_Info, s_InfoMsg)
