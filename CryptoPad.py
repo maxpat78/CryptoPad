@@ -1,8 +1,8 @@
 """
-   CryptoPad 0.5
-    
-   A simple encrypting Notepad.
-   Saves UTF-8 CR-LF encoded text as ZIP archive encrypted with AES-256.
+   CryptoPad 0.6 - A simple Tkinter encrypting Notepad
+   
+   Supports ASCII and UTF-(8|16) encoded text and universal line endings.
+   Supports special document format (ZIP archive encrypted with AES-256).
    Uses mZipAES. Both for Python 2.7 & 3.4."""
 import sys
 
@@ -20,7 +20,7 @@ from mZipAES import MiniZipAE1Writer, MiniZipAE1Reader
 import os
 
 s_Document = 'CryptoPad Document'
-VERSION = '0.5'
+VERSION = '0.6'
 
 
 
@@ -33,6 +33,8 @@ if 0:
     s_MenuFileSave = 'Save'
     s_MenuFileSaveAs = 'Save as...'
     s_MenuFileQuit = 'Quit'
+    s_MenuFileSetPW = 'Set Password'
+    s_MenuFileResetPW = 'Reset Password'
     s_MenuEdit = 'Edit'
     s_MenuEditUndo = 'Undo'
     s_MenuEditRedo = 'Redo'
@@ -49,7 +51,7 @@ if 0:
     s_Quit = 'Quit'
     s_QuitMsg = 'Do you really want to discard changes to the open document?'
     s_Info = 'About CryptoPad'
-    s_InfoMsg = 'CryptoPad '+VERSION+'\n\nA simple UTF-8 notepad supporting compressed documents in ZIP AES-256 encrypted format.'
+    s_InfoMsg = 'CryptoPad '+VERSION+'\n\nA simple notepad supporting compressed documents in ZIP AES-256 encrypted format.'
     s_Error = 'Error'
     s_ErrorSaveMsg = 'Not saved - There was an error while saving the document!'
     s_ErrorUnzipMsg = 'Can not load - There was an error while decrypting the document!'
@@ -62,6 +64,8 @@ else:
     s_MenuFileSave = 'Salva'
     s_MenuFileSaveAs = 'Salva con nome...'
     s_MenuFileQuit = 'Esci'
+    s_MenuFileSetPW = 'Imposta Password'
+    s_MenuFileResetPW = 'Rimuovi Password'
     s_MenuEdit = 'Modifica'
     s_MenuEditUndo = 'Annulla'
     s_MenuEditRedo = 'Ripeti'
@@ -78,7 +82,7 @@ else:
     s_Quit = 'Esci'
     s_QuitMsg = 'Si desidera veramente chiudere CryptoPad e scartare le modifiche?'
     s_Info = 'Informazioni su CryptoPad'
-    s_InfoMsg = 'CryptoPad '+VERSION+'\n\nUn semplice blocco note in UTF-8 che supporta documenti compressi in formato ZIP cifrato con AES-256.'
+    s_InfoMsg = 'CryptoPad '+VERSION+'\n\nUn semplice blocco note che supporta documenti compressi in formato ZIP cifrato con AES-256.'
     s_New = 'Avviso'
     s_NewMsg = 'Si desidera scartare le modifiche al documento corrente?'
     s_Error = 'Errore'
@@ -87,6 +91,37 @@ else:
     
     
     
+def detect_eol(s):
+    "Detects line ending"
+    crlf = s.count('\r\n')
+    cr = s.count('\r') - crlf
+    lf = s.count('\n') - crlf
+    if not crlf and not cr and not lf:
+        return 0 # NONE
+    if not cr and not lf:
+        return 1 # CRLF
+    if not crlf and not lf:
+        return 2 # CR
+    if not crlf and not cr:
+        return 3 # LF
+    return 4 # MIXED (=to be fixed)
+
+def convert_eol(s, eol):
+    "Converts line ending"
+    #~ print "DEBUG: convert_eol --> ", eol
+    #~ open('src_eol.bin', 'wb').write(s)
+    if eol == 1: # CRLF
+        s = re.sub('\r\n?', '\r\n', s)
+        s = re.sub('\r?\n', '\r\n', s)
+    elif eol == 2: # CR
+        s = re.sub('\r?\n', '\r', s)
+    elif eol == 3: # LF
+        s = re.sub('\r\n?', '\n', s)
+    #~ open('dst_eol.bin', 'wb').write(s)
+    return s
+
+
+
 class CryptoPad(Tk):
     def __init__ (p):
         Tk.__init__(p)
@@ -94,11 +129,17 @@ class CryptoPad(Tk):
         p.textPad = scrolledtext.ScrolledText(p, width=100, height=30, wrap=WORD, exportselection=True, undo=True)
         p.target_txt = None
         p.password = None
+        p.is_crypted = False
+        p.textPad.SetEOL = IntVar() # CRLF
+        p.textPad.SetEOL.set(1)
+        p.textPad.SetENC = IntVar() # UTF-8
+        p.textPad.SetENC.set(1)
         
         menu = Menu(p, tearoff=0)
         p.config(menu=menu)
         
         filemenu = Menu(menu, tearoff=0)
+        p.filemenu = filemenu
         menu.add_cascade(label=s_MenuFile, menu=filemenu, underline=0)
         filemenu.add_command(label=s_MenuFileNew, command=p.new_command, underline=0, accelerator='CTRL+N')
         p.bind('<Control-n>', p.new_command)
@@ -107,6 +148,24 @@ class CryptoPad(Tk):
         filemenu.add_command(label=s_MenuFileSave, command=p.save_command, underline=0, accelerator='CTRL+S')
         p.bind('<Control-s>', p.save_command)
         filemenu.add_command(label=s_MenuFileSaveAs, command=p.saveas_command, underline=3)
+
+        filemenu.add_separator()
+        smenu = Menu(p, tearoff=0)
+        smenu.add_checkbutton(label="CRLF", variable=p.textPad.SetEOL, onvalue=1)
+        smenu.add_checkbutton(label="CR", variable=p.textPad.SetEOL, onvalue=2)
+        smenu.add_checkbutton(label="LF", variable=p.textPad.SetEOL, onvalue=3)
+        filemenu.add_cascade(label='EOL', menu=smenu, underline=0)
+        smenu = Menu(p, tearoff=0)
+        smenu.add_checkbutton(label="UTF-8", variable=p.textPad.SetENC, onvalue=1)
+        smenu.add_checkbutton(label="UTF-16-LE", variable=p.textPad.SetENC, onvalue=2)
+        smenu.add_checkbutton(label="UTF-16-BE", variable=p.textPad.SetENC, onvalue=3)
+        smenu.add_checkbutton(label="ASCII", variable=p.textPad.SetENC, onvalue=4)
+        filemenu.add_cascade(label='Encoding', menu=smenu, underline=0)
+
+        filemenu.add_separator()
+        filemenu.add_command(label=s_MenuFileSetPW, command=p.set_password, underline=0)
+        filemenu.add_command(label=s_MenuFileResetPW, command=p.reset_password, underline=0)
+
         filemenu.add_separator()
         filemenu.add_command(label=s_MenuFileQuit, command=p.exit_command, underline=0)
 
@@ -154,24 +213,34 @@ class CryptoPad(Tk):
                     p.password = simpledialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
                 try:
                     zip = MiniZipAE1Reader(stream, p.password)
+                    p.is_crypted = True
                 except:
                     messagebox.showerror(s_Error, s_ErrorUnzipMsg)
                 s = zip.get()
             else:
                 s = stream.read()
         if not s: return
+        p.textPad.SetENC.set(4) # ASCII
         if len(s) > 3 and s[:3] == b'\xEF\xBB\xBF':
             s = s.decode('utf-8-sig')
+            p.textPad.SetENC.set(1)
         elif len(s) > 2:
             if s[:2] == b'\xFF\xFE':
-                s = s.decode('utf-16le')
+                s = s[2:].decode('utf-16le')
+                p.textPad.SetENC.set(2)
             elif s[:2] == b'\xFE\xFF':
-                s = s.decode('utf-16be')
+                s = s[2:].decode('utf-16be')
+                p.textPad.SetENC.set(3)
         # else: is plain ASCII
         # Handles binary files
         if b'\x00' in s:
             s = s.replace('\x00', ' ')
-        s = s.replace('\x0D\x0A', '\x0A')
+        eol = detect_eol(s)
+        if eol in (0, 4):
+            eol = 1
+        p.textPad.SetEOL.set(eol)
+        # Assuming buffer is now... ASCII? What is it internal Python encoding??
+        s = convert_eol(s, 3) # Tkinter text box wants LF
         p.textPad.delete('1.0', END+'-1c')
         p.textPad.insert('1.0', s)
         p.title(os.path.basename(p.target_txt)[:-4] + s_Title)
@@ -181,30 +250,43 @@ class CryptoPad(Tk):
     def save_command(p, evt=None):
         if p.target_txt == None:
             p.saveas_command()
+            return
         s = p.textPad.get('1.0', END+'-1c')
-        s = s.replace('\x0A', '\x0D\x0A')
-        s = s.encode('utf-8-sig')
-        with open(p.target_txt+'.tmp', 'wb') as pkstream:
-            try:
-                zip = MiniZipAE1Writer(pkstream, p.password)
-                zip.append('data', s)
-                zip.zipcomment = s_Document
-                zip.write()
-                # Cerca di sostituire l'originale solo in assenza di errori
+        s = convert_eol(s, p.textPad.SetEOL.get())
+        s = s.encode(('', 'utf-8-sig', 'utf-16le', 'utf-16be', 'cp1252')[p.textPad.SetENC.get()])
+        if p.textPad.SetENC.get() == 2:
+            s = b'\xFF\xFE' + s
+        elif p.textPad.SetENC.get() == 3:
+            s = b'\xFE\xFF' + s
+        with open(p.target_txt+'.tmp', 'wb') as stream:
+            if p.is_crypted:
+                try:
+                    zip = MiniZipAE1Writer(stream, p.password)
+                    zip.append('data', s)
+                    zip.zipcomment = s_Document
+                    zip.write()
+                    # Cerca di sostituire l'originale solo in assenza di errori
+                    if os.path.exists(p.target_txt):
+                        os.remove(p.target_txt)
+                    stream.close()
+                    os.rename(p.target_txt+'.tmp', p.target_txt)
+                except:
+                    messagebox.showerror(s_Error, s_ErrorSaveMsg)
+                else:
+                    p.title(os.path.basename(p.target_txt)[:-4] + s_Title)
+                    p.textPad.edit_modified(False)
+                    p.textPad.edit_separator()
+            else:
+                stream.write(s)
+                stream.close()
                 if os.path.exists(p.target_txt):
                     os.remove(p.target_txt)
-                pkstream.close()
                 os.rename(p.target_txt+'.tmp', p.target_txt)
-            except:
-                messagebox.showerror(s_Error, s_ErrorSaveMsg)
-            else:
                 p.title(os.path.basename(p.target_txt)[:-4] + s_Title)
                 p.textPad.edit_modified(False)
                 p.textPad.edit_separator()
 
-    def saveas_command(p):
-        new_target = filedialog.asksaveasfilename(defaultextension='.txt', filetypes=[(s_Document, '*.txt'),], title=s_MenuFileSave)
-        if not new_target: return
+    def askpw(p):
         p.password = None
         
         pw1, pw2 = 1, 2
@@ -215,6 +297,10 @@ class CryptoPad(Tk):
             pw2 = simpledialog.askstring("Passphrase", s_RepeatPassword+s_Password, show='*')
 
         p.password = pw1
+        
+    def saveas_command(p):
+        new_target = filedialog.asksaveasfilename(defaultextension='.txt', filetypes=[(s_Document, '*.txt'),], title=s_MenuFileSave)
+        if not new_target: return
         p.target_txt = new_target
         p.save_command()
         
@@ -271,12 +357,22 @@ class CryptoPad(Tk):
         
     def refresh_menu(p):
         "Called thanks to postcommand when menu is selected"
+        p.filemenu.entryconfig(s_MenuFileResetPW, state=('active','disabled')[p.password==None])
         s = ('active','disabled')[p.textPad.tag_ranges("sel")==()]
         p.editmenu.entryconfig(s_MenuEditDel, state=s)
         p.editmenu.entryconfig(s_MenuEditCut, state=s)
         p.editmenu.entryconfig(s_MenuEditCopy, state=s)
         p.editmenu.entryconfig(s_MenuEditPaste, state=('active','disabled')[p.clipboard_get()==None])
-        
+
+    def set_password(p):
+        p.askpw()
+        p.is_crypted = True
+        #~ p.textPad.SetENC.set(1) # Always set UTF-8
+
+    def reset_password(p):
+        p.is_crypted = False
+        p.password = None
+
 
 root = CryptoPad()
 root.mainloop()
