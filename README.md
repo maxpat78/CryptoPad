@@ -1,7 +1,7 @@
 CryptoPad
 =========
 
-A simple Notepad coded in Python and Tkinter (x86) and tested under Windows 10. It runs with both Python 2.7 and 3.4.
+A simple Notepad coded in Python and Tkinter (x86) and tested under Windows 10. It runs with both Python 2.7 and 3.4. GPL licensed.
 
 
 It is able to read and write text documents (encoded in ASCII, UTF-8 or UTF-16 with any line ending) incapsulated into simple ZIP archives and encrypted with AES for maximum security and portability.
