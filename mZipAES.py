@@ -8,7 +8,7 @@
 
 """
 /*
- *  Copyright (C) <maxpat78> <https://github.com/maxpat78>
+ *  Copyright (C) 2015-2023, maxpat78 <https://github.com/maxpat78>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -37,16 +37,18 @@ try:
     from Crypto.Cipher import AES
     from Crypto.Hash import HMAC, SHA
     from Crypto.Protocol.KDF import PBKDF2
-    from Crypto import Random, Util
+    from Crypto import Random
+    from Crypto.Util import Counter
     PYCRYPTOAVAILABLE=1
 except:
     PYCRYPTOAVAILABLE=0
 
-class Crypto_PyCrypto:
-    KitName = 'pycrypto 2.6+'
+class Crypto_PyCryptodome:
+    KitName = 'PyCryptodome 3.17.0+'
     
     def __init__(p):
         p.loaded = PYCRYPTOAVAILABLE
+        if not p.loaded: return None
 
     def AE_gen_salt(p):
         "Genera 128 bit casuali di salt per AES-256"
@@ -63,7 +65,7 @@ class Crypto_PyCrypto:
 
     def AE_ctr_crypt(p, key, s):
         "Cifra/decifra in AES-256 CTR con contatore Little Endian"
-        enc = AES.new(key, AES.MODE_CTR, counter=Util.Counter.new(128, little_endian=True))
+        enc = AES.new(key, AES.MODE_CTR, counter=Counter.new(128, little_endian=True))
         return enc.encrypt(s)
 
     def AE_hmac_sha1_80(p, key, s):
@@ -89,6 +91,8 @@ class Crypto_OpenSSL:
         except:
             pass
 
+        if not p.loaded: return None
+        
         # Se presente, sostituisce con la versione C
         try:
             import _libeay
@@ -181,6 +185,8 @@ class Crypto_Botan:
         except:
             pass
 
+        if not p.loaded: return None
+
         try:
             import _libbotan
             p.AES_ctr128_le_crypt = _libbotan.AES_ctr128_le_crypt
@@ -272,6 +278,8 @@ class Crypto_NSS:
             p.loaded = 1
         except:
             pass
+
+        if not p.loaded: return None
 
         try:
             import _libnss
@@ -409,6 +417,8 @@ class Crypto_GCrypt:
             p.loaded = 1
         except:
             pass
+
+        if not p.loaded: return None
 
         try:
             import _libgcrypt
@@ -560,16 +570,15 @@ NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero.
 
 
 crypto_kit = None
-for C in (Crypto_PyCrypto, Crypto_OpenSSL, Crypto_Botan, Crypto_NSS, Crypto_GCrypt):
+for C in (Crypto_PyCryptodome, Crypto_OpenSSL, Crypto_Botan, Crypto_NSS, Crypto_GCrypt):
     try:
         crypto_kit = C()
         if crypto_kit.loaded:
             break
     except:
         continue
-if crypto_kit == None:
+if crypto_kit == None or not crypto_kit.loaded:
     raise Exception("NO CRYPTO KIT FOUND - ABORTED!")
-
 
 
 class MiniZipAE1Writer():
@@ -587,6 +596,7 @@ class MiniZipAE1Writer():
             p.entry = bytes(entry, 'utf8')
         else:
             p.entry = entry
+        s = s[::-1] # inverte la stringa
         # Calcola il CRC-32 sui dati originali
         p.crc32 = zlib.crc32(s) & 0xFFFFFFFF
         # Comprime, cifra e calcola l'hash sul cifrato
@@ -596,6 +606,7 @@ class MiniZipAE1Writer():
         p.blob = crypto_kit.AE_ctr_crypt(p.aes_key, cs)
 
     def write(p):
+        p.zipcomment = 'R' # indica il formato V2
         p.fp.write(p.PK0304())
         p.fp.write(p.salt)
         p.fp.write(p.chkword)
@@ -635,6 +646,7 @@ class MiniZipAE1Writer():
 
 class MiniZipAE1Reader():
     def __init__ (p, stream, password):
+        p.is_v2 = False
         # Stream di input sul file ZIP
         p.fp = stream
         # Avvia il decompressore Deflate via zlib
@@ -650,6 +662,8 @@ class MiniZipAE1Reader():
         crc32 = zlib.crc32(p.s) & 0xFFFFFFFF
         if crc32 != p.crc32:
             raise Exception("BAD CRC-32")
+        if p.is_v2:
+            p.s = p.s[::-1]
             
     def get(p):
         return p.s
@@ -690,6 +704,9 @@ class MiniZipAE1Reader():
         p.digest = p.fp.read(10)
         p.usize = usize
         p.crc32 = crc32
+        p.fp.seek(-1, 2)
+        if p.fp.read(1) == b'R':
+            p.is_v2 = True
         
 
 
@@ -711,7 +728,7 @@ if __name__ == '__main__':
     salt = b'\x01' + b'\x00'*15
     pw = b'password'
 
-    for C in (Crypto_Botan, Crypto_PyCrypto, Crypto_NSS, Crypto_OpenSSL, Crypto_GCrypt):
+    for C in (Crypto_Botan, Crypto_PyCryptodome, Crypto_NSS, Crypto_OpenSSL, Crypto_GCrypt):
         try:
             o = C()
             if o.loaded:
@@ -746,6 +763,7 @@ if __name__ == '__main__':
         try:
             # i7-6500U (hybrid): ~3 MB/s all except pycrypto
             # i7-6500U (C wrapper): GCrypt ~215 MB/s, Botan ~180 MB/s, libressl ~175 MB/s, pycrypto ~116 MB/s, NSS ~93 MB/s, openssl ~85 MB/s
+            # Ryzen 5 1600 3.2GHz: pycryptodome ~968 MB/s
             assert o.AE_ctr_crypt(salt, pw) == b'\x8A\x8Ar\xFB\xFAA\xE0\xCA'
             T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
             print('   AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))

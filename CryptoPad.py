@@ -1,12 +1,12 @@
 """
-   CryptoPad 0.6 - A simple Tkinter encrypting Notepad
+   CryptoPad 0.7 - A simple Tkinter encrypting Notepad
    
    Supports ASCII and UTF-(8|16) encoded text and universal line endings.
    Supports special document format (ZIP archive encrypted with AES-256).
-   Uses mZipAES. Both for Python 2.7 & 3.4.
+   Uses mZipAES. Requires Python 3.
    
 /*
- *  Copyright (C) <maxpat78> <https://github.com/maxpat78>
+ *  Copyright (C) 2015-2023, maxpat78 <https://github.com/maxpat78>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -22,23 +22,16 @@
  *  with this program; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */ """
-import sys
-
-if sys.version_info >= (3,0): 
-    from tkinter import *
-    from tkinter import scrolledtext, filedialog, messagebox, simpledialog
-else:
-    from Tkinter import *
-    import ScrolledText as scrolledtext
-    import tkFileDialog as filedialog
-    import tkMessageBox as messagebox
-    import tkSimpleDialog as simpledialog
+import sys, re, os
+from tkinter import *
+from tkinter import scrolledtext, filedialog, messagebox, simpledialog
 
 from mZipAES import MiniZipAE1Writer, MiniZipAE1Reader
-import os
+
+
 
 s_Document = 'CryptoPad Document'
-VERSION = '0.6'
+VERSION = '0.7'
 
 
 
@@ -110,7 +103,7 @@ else:
     
     
 def detect_eol(s):
-    "Detects line ending"
+    "Detects a string line ending"
     crlf = s.count('\r\n')
     cr = s.count('\r') - crlf
     lf = s.count('\n') - crlf
@@ -221,7 +214,7 @@ class CryptoPad(Tk):
         if p.target_txt == '':
             return
 
-        s = ''
+        s = b''
         with open(p.target_txt, 'rb') as stream:
             s = stream.read(4)
             stream.seek(0)
@@ -234,10 +227,12 @@ class CryptoPad(Tk):
                     p.is_crypted = True
                 except:
                     messagebox.showerror(s_Error, s_ErrorUnzipMsg)
+                    return
                 s = zip.get()
             else:
                 s = stream.read()
         if not s: return
+        
         p.textPad.SetENC.set(4) # ASCII
         if len(s) > 3 and s[:3] == b'\xEF\xBB\xBF':
             s = s.decode('utf-8-sig')
@@ -249,10 +244,11 @@ class CryptoPad(Tk):
             elif s[:2] == b'\xFE\xFF':
                 s = s[2:].decode('utf-16be')
                 p.textPad.SetENC.set(3)
-        # else: is plain ASCII
-        # Handles binary files
-        if b'\x00' in s:
-            s = s.replace('\x00', ' ')
+            else: # assume plain ASCII
+                if b'\0' in s:
+                    s = s.replace(b'\0', b' ')
+                s = s.decode('cp1252')
+                p.textPad.SetENC.set(4)
         eol = detect_eol(s)
         if eol in (0, 4):
             eol = 1
@@ -260,6 +256,8 @@ class CryptoPad(Tk):
         # Assuming buffer is now... ASCII? What is it internal Python encoding??
         s = convert_eol(s, 3) # Tkinter text box wants LF
         p.textPad.delete('1.0', END+'-1c')
+        if type(s) == bytes:
+            s = s.decode( ('', 'utf-8-sig', 'utf-16le', 'utf-16be', 'cp1252')[p.textPad.SetENC.get()] )
         p.textPad.insert('1.0', s)
         p.title(os.path.basename(p.target_txt)[:-4] + s_Title)
         p.textPad.edit_modified(False)
@@ -271,7 +269,8 @@ class CryptoPad(Tk):
             return
         s = p.textPad.get('1.0', END+'-1c')
         s = convert_eol(s, p.textPad.SetEOL.get())
-        s = s.encode(('', 'utf-8-sig', 'utf-16le', 'utf-16be', 'cp1252')[p.textPad.SetENC.get()])
+        if type(s) == str:
+            s = bytes(s, ('', 'utf-8-sig', 'utf-16le', 'utf-16be', 'cp1252')[p.textPad.SetENC.get()])
         if p.textPad.SetENC.get() == 2:
             s = b'\xFF\xFE' + s
         elif p.textPad.SetENC.get() == 3:
@@ -281,7 +280,6 @@ class CryptoPad(Tk):
                 try:
                     zip = MiniZipAE1Writer(stream, p.password)
                     zip.append('data', s)
-                    zip.zipcomment = s_Document
                     zip.write()
                     # Cerca di sostituire l'originale solo in assenza di errori
                     if os.path.exists(p.target_txt):
