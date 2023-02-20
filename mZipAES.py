@@ -2,7 +2,7 @@
 
 # Encrypts in AES-256, decrypts with smaller keys, too
 
-# Based on Python x86. It requires one of the cypto toolkits/libraries:
+# Based on Python x64. It requires one of the cypto toolkits/libraries:
 # pycrypto, libeay (libcrypto) from OpenSSL or LibreSSL, botan, (lib)NSS3
 # from Mozilla or GNU libgcrypt.
 
@@ -27,11 +27,9 @@
 """
 
 from __future__ import print_function
-import zlib, struct, time, sys
+import zlib, struct, time, sys, os
 from ctypes import *
-
-if sys.version_info < (3,0):
-    range = xrange
+from ctypes.util import find_library
 
 try:
     from Crypto.Cipher import AES
@@ -42,6 +40,18 @@ try:
     PYCRYPTOAVAILABLE=1
 except:
     PYCRYPTOAVAILABLE=0
+
+def find_crypto(p, libs):
+    p.loaded = 0
+    lib = list(filter(find_library, libs))
+    try:
+        if lib:
+            lib = os.path.abspath(find_library(lib[0]))
+            p.handle = CDLL(lib)
+            p.loaded = 1
+    except:
+        return
+    
 
 class Crypto_PyCryptodome:
     KitName = 'PyCryptodome 3.17.0+'
@@ -80,19 +90,16 @@ class Crypto_OpenSSL:
     KitName = 'OpenSSL 1.0.2+/LibreSSL'
     
     def __init__(p):
-        p.loaded = 0
-        try:
-            if sys.platform != 'win32':
-                # ...or whatever/wherever
-                p.handle = CDLL('libcrypto.so') or CDLL('libcrypto.so.1.0.0')
-            else:
-                p.handle = CDLL('libcrypto-1_1') or CDLL('libeay32') or CDLL('libcrypto-38')
-            p.loaded = 1
-        except:
-            pass
+        libs = ['libcrypto.so', 'libcrypto.so.1.0.0', 'libcrypto-1_1', 'crypto-50']
+        find_crypto(p, libs)
 
-        if not p.loaded: return None
-        
+        if p.handle:
+            x = p.handle
+            # We need these in x64 since c_void_p != c_int and right size can't be guessed automatically
+            x.HMAC.argtypes = [c_void_p, c_void_p, c_int, c_char_p, c_size_t, c_void_p, c_void_p]
+            x.HMAC.restype = c_void_p
+            x.EVP_sha1.restype = c_void_p
+
         # Se presente, sostituisce con la versione C
         try:
             import _libeay
@@ -112,13 +119,10 @@ class Crypto_OpenSSL:
     # circa 35 volte più lenta!
     #
     # !!!CAVE!!! Su Python 3.4 è circa 1,6x più lenta rispetto a Python 2.7!
-    def AES_ctr128_le_crypt(self, key, s):
+    def AES_ctr128_le_crypt(p, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
-        #~ # This slows down to 755 K/s
-        #~ self.handle.AES_ecb_encrypt.argtypes = [c_char_p, c_char_p, c_void_p, c_int]        
-        #~ self.handle.AES_ecb_encrypt.restype = [c_int]        
         AES_KEY = create_string_buffer(244)
-        self.handle.AES_set_encrypt_key(key, len(key)*8, AES_KEY)
+        p.handle.AES_set_encrypt_key(key, len(key)*8, AES_KEY)
         
         buf = (c_byte*len(s)).from_buffer_copy(s)
         
@@ -127,7 +131,7 @@ class Crypto_OpenSSL:
         pectr = cast(ectr, POINTER(c_byte))
         cnt = 0
         j = 0
-        fuAES = self.handle.AES_ecb_encrypt
+        fuAES = p.handle.AES_ecb_encrypt
         for i in range(len(s)):
             j=i%16
             if not j:
@@ -144,8 +148,6 @@ class Crypto_OpenSSL:
         "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
         p.handle.RAND_poll()
-        if sys.platform == 'win32':
-            p.handle.RAND_screen()
         if not p.handle.RAND_bytes(key, 16):
             p.handle.RAND_pseudo_bytes(key, 16)
         return key.raw
@@ -172,20 +174,11 @@ class Crypto_OpenSSL:
 
 
 class Crypto_Botan:
-    KitName = 'Botan 1.11.16+'
+    KitName = 'Botan 2.19.3+'
     
     def __init__(p):
-        p.loaded = 0
-        try:
-            if sys.platform != 'win32':
-                p.handle = CDLL('libbotan-1.11.so')
-            else:
-                p.handle = CDLL('botan')
-            p.loaded = 1
-        except:
-            pass
-
-        if not p.loaded: return None
+        libs = ['libbotan-2.19.so', 'botan']
+        find_crypto(p, libs)
 
         try:
             import _libbotan
@@ -197,9 +190,9 @@ class Crypto_Botan:
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
 
         cipher = c_void_p(0)
-        mode = {16:b'AES-128/ECB', 24:b'AES-192/ECB', 32:b'AES-256/ECB'}[len(key)]
-        self.handle.botan_cipher_init(byref(cipher), mode, 0)
-        self.handle.botan_cipher_set_key(cipher, key, len(key))
+        mode = {16:b'AES-128', 24:b'AES-192', 32:b'AES-256'}[len(key)]
+        self.handle.botan_block_cipher_init(byref(cipher), mode)
+        self.handle.botan_block_cipher_set_key(cipher, key, c_size_t(len(key)))
         
         buf = (c_byte*len(s)).from_buffer_copy(s)
         ctr = create_string_buffer(16)
@@ -207,16 +200,13 @@ class Crypto_Botan:
         pectr = cast(ectr, POINTER(c_byte))
         cnt = 0
         j = 0
-        o0 = byref(c_size_t(0))
-        i0 = byref(c_size_t(0))
-        u = c_uint32(1)
-        fuAES = self.handle.botan_cipher_update
+        fuAES = self.handle.botan_block_cipher_encrypt_blocks
         for i in range(len(s)):
             j=i%16
             if not j:
                 cnt += 1
                 struct.pack_into('<Q', ctr, 0, cnt)
-                fuAES(cipher, u, ectr, 16, o0, ctr, 16, i0)
+                fuAES(cipher, ctr, ectr, c_size_t(1))
             buf[i] ^= pectr[j]
         if sys.version_info >= (3,0):
             return bytes(buf)
@@ -265,21 +255,17 @@ class Crypto_NSS:
         _fields_ = [('SECItemType', c_uint), ('data', POINTER(c_char)), ('len', c_uint)]
 
     def __init__(p):
+        libs = ['libnss3.so', 'nss3']
+        find_crypto(p, libs)
         p.loaded = 0
         try:
-            if sys.platform != 'win32':
-                p.handle = CDLL('libnss3.so')
-            else:
-                p.handle = CDLL('nss3')
             p.handle.NSS_NoDB_Init(".")
             # Servono almeno le DLL nss3, softokn3, freebl3, mozglue
             if not p.handle.NSS_IsInitialized():
                 raise Exception("NSS3 INITIALIZATION FAILED")
             p.loaded = 1
         except:
-            pass
-
-        if not p.loaded: return None
+            return
 
         try:
             import _libnss
@@ -408,17 +394,8 @@ class Crypto_GCrypt:
     KitName = 'GNU libgcrypt'
     
     def __init__(p):
-        p.loaded = 0
-        try:
-            if sys.platform != 'win32':
-                p.handle = CDLL('libgcrypt-20.so')
-            else:
-                p.handle = CDLL('libgcrypt-20')
-            p.loaded = 1
-        except:
-            pass
-
-        if not p.loaded: return None
+        libs = ['libgcrypt-20.so', 'libgcrypt-20']
+        find_crypto(p, libs)
 
         try:
             import _libgcrypt
@@ -737,6 +714,7 @@ if __name__ == '__main__':
                 print(o.KitName, 'not available.')
                 continue
         except:
+            print(o.KitName, 'raised en exception!')
             continue
 
         print(' + random salt generation',)
@@ -760,10 +738,11 @@ if __name__ == '__main__':
             print('   FAILED.')
 
         print(' + AES encryption')
+        #~ print( o.AE_ctr_crypt(salt, pw) )
         try:
-            # i7-6500U (hybrid): ~3 MB/s all except pycrypto
+            # i7-6500U and Ryzen 5 1600 (hybrid): ~3 MB/s all except pycrypto
             # i7-6500U (C wrapper): GCrypt ~215 MB/s, Botan ~180 MB/s, libressl ~175 MB/s, pycrypto ~116 MB/s, NSS ~93 MB/s, openssl ~85 MB/s
-            # Ryzen 5 1600 3.2GHz: pycryptodome ~968 MB/s
+            # Ryzen 5 1600 (C wrapper): pycryptodome ~968 MB/s, botan ~380 MB/s, libressl ~230 MB/s
             assert o.AE_ctr_crypt(salt, pw) == b'\x8A\x8Ar\xFB\xFAA\xE0\xCA'
             T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
             print('   AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
