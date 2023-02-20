@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) <maxpat78> <https://github.com/maxpat78>
+ *  Copyright (C) 2015-2023 maxpat78 <https://github.com/maxpat78>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -16,11 +16,16 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "Python.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
 #include <gcrypt.h>
 
+#define PY_SSIZE_T_CLEAN size_t
+#include <Python.h>
+
 #ifdef BYTE_ORDER_1234
-void betole64(unsigned long long *x) {
+void betole64(uint64_t *x) {
 *x = (*x & 0x00000000FFFFFFFF) << 32 | (*x & 0xFFFFFFFF00000000) >> 32;
 *x = (*x & 0x0000FFFF0000FFFF) << 16 | (*x & 0xFFFF0000FFFF0000) >> 16;
 *x = (*x & 0x00FF00FF00FF00FF) << 8  | (*x & 0xFF00FF00FF00FF00) >> 8;
@@ -67,30 +72,30 @@ PyObject *self, *args;
 
 	for (i=0; i < buf_len/16; i++) {
 #ifndef BYTE_ORDER_1234
-		(*((unsigned long long*) ctr_counter_le))++;
+		(*((uint64_t*) ctr_counter_le))++;
 #else	
-		(*((unsigned long long*) ctr_counter_be))++;
-		*((unsigned long long*) ctr_counter_le) = *((unsigned long long*) ctr_counter_be);
-		betole64((unsigned long long*)ctr_counter_le);
+		(*((uint64_t*) ctr_counter_be))++;
+		*((uint64_t*) ctr_counter_le) = *((uint64_t*) ctr_counter_be);
+		betole64((uint64_t*)ctr_counter_le);
 #endif
 		gcry_cipher_encrypt(cipher, ctr_encrypted_counter, 16, ctr_counter_le, 16);
 
-		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) p);
-		pbuf+=sizeof(long long);
-		src+=sizeof(long long);
+		*((uint64_t*) pbuf) = *((uint64_t*) buf) ^ *((uint64_t*) p);
+		pbuf+=sizeof(uint64_t);
+		buf+=sizeof(uint64_t);
 
-		*((unsigned long long*) pbuf) = *((unsigned long long*) src) ^ *((unsigned long long*) q);
-		pbuf+=sizeof(long long);
-		src+=sizeof(long long);
+		*((uint64_t*) pbuf) = *((uint64_t*) buf) ^ *((uint64_t*) q);
+		pbuf+=sizeof(uint64_t);
+		buf+=sizeof(uint64_t);
 	}
 
 	if ((i = buf_len%16)) {
 #ifndef BYTE_ORDER_1234
-		(*((unsigned long long*) ctr_counter_le))++;
+		(*((uint64_t*) ctr_counter_le))++;
 #else	
-		(*((unsigned long long*) ctr_counter_be))++;
-		*((unsigned long long*) ctr_counter_le) = *((unsigned long long*) ctr_counter_be);
-		betole64((unsigned long long*)ctr_counter_le);
+		(*((uint64_t*) ctr_counter_be))++;
+		*((uint64_t*) ctr_counter_le) = *((uint64_t*) ctr_counter_be);
+		betole64((uint64_t*)ctr_counter_le);
 #endif
 		gcry_cipher_encrypt(cipher, ctr_encrypted_counter, 16, ctr_counter_le, 16);
 		while (i--)

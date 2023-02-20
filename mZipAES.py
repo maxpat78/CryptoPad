@@ -273,6 +273,27 @@ class Crypto_NSS:
         except:
             pass
 
+        # We need these in x64 since c_void_p != c_int and right size can't be guessed automatically
+        if p.handle:
+            x = p.handle
+            x.PK11_CreatePBEV2AlgorithmID.restype = c_void_p
+            x.PK11_PBEKeyGen.argtypes = [c_void_p, c_void_p, c_void_p, c_int, c_void_p]
+            x.PK11_FreeSymKey.argtypes = [c_void_p]
+            x.PK11_FreeSlot.argtypes = [c_void_p]
+            x.PK11_ParamFromIV.restype = c_void_p
+            x.PK11_PBEKeyGen.restype = c_void_p
+            x.PK11_ExtractKeyValue.argtypes = [c_void_p]
+            x.PK11_ExtractKeyValue.restype = c_void_p
+            x.PK11_GetKeyData.argtypes = [c_void_p]
+            x.PK11_GetKeyData.restype = c_void_p
+            x.PK11_GetBestSlot.restype = c_void_p
+            x.PK11_ImportSymKey.argtypes = [c_void_p, c_int, c_int, c_int, c_void_p, c_void_p]
+            x.PK11_ImportSymKey.restype = c_void_p
+            x.PK11_CreateContextBySymKey.argtypes = [c_int, c_int, c_void_p, c_void_p]
+            x.PK11_CreateContextBySymKey.restype = c_void_p
+            x.PK11_CipherOp.argtypes = [c_void_p, c_void_p, c_void_p, c_int, c_void_p, c_int]
+            x.PK11_DestroyContext.argtypes = [c_void_p]
+
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
         
@@ -292,7 +313,7 @@ class Crypto_NSS:
         sk = self.handle.PK11_ImportSymKey(slot, 0x1081, 4, 0x104, byref(ki), 0)
         sp = self.handle.PK11_ParamFromIV(0x1081, 0)
         ctxt = self.handle.PK11_CreateContextBySymKey(0x1081, 0x104, sk, sp)
-        
+
         buf = (c_byte*len(s)).from_buffer_copy(s)
         ctr = create_string_buffer(16)
         ectr = create_string_buffer(16)
@@ -370,21 +391,21 @@ class Crypto_NSS:
         # In lib\util\pkcs11t.h
         # CKM_SHA_1_HMAC = 0x00000221
         # CKA_SIGN = 0x00000108
-        slot = p.handle.PK11_GetBestSlot(0x221, 0)
+        slot = p.handle.PK11_GetBestSlot(0x221, c_void_p(0))
         # PK11_OriginUnwrap = 4
         sk = p.handle.PK11_ImportSymKey(slot, 0x221, 4, 0x108, byref(ki), 0)
 
         np = p.SECItemStr()
         ctxt = p.handle.PK11_CreateContextBySymKey(0x221, 0x108, sk, byref(np))
-        p.handle.PK11_DigestBegin(ctxt)
-        p.handle.PK11_DigestOp(ctxt, s, len(s))
+        p.handle.PK11_DigestBegin(c_void_p(ctxt))
+        p.handle.PK11_DigestOp(c_void_p(ctxt), s, len(s))
         digest = create_string_buffer(20)
         length = c_uint32(0)
-        p.handle.PK11_DigestFinal(ctxt, digest, byref(length), 20)
+        p.handle.PK11_DigestFinal(c_void_p(ctxt), digest, byref(length), 20)
 
-        p.handle.PK11_DestroyContext(ctxt, 1)
-        p.handle.PK11_FreeSymKey(sk)
-        p.handle.PK11_FreeSlot(slot)
+        p.handle.PK11_DestroyContext(c_void_p(ctxt), 1)
+        p.handle.PK11_FreeSymKey(c_void_p(sk))
+        p.handle.PK11_FreeSlot(c_void_p(slot))
 
         return digest.raw[:10]
 
@@ -402,11 +423,15 @@ class Crypto_GCrypt:
             p.AES_ctr128_le_crypt = _libgcrypt.AES_ctr128_le_crypt
         except:
             pass
+        
+        if p.handle:
+            x = p.handle
+            x.gcry_random_bytes.restype = c_void_p
 
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
 
-        hd = c_long(0)
+        hd = c_void_p(0)
         
         # GCRY_CIPHER_AESXXX = 7..9; GCRY_CIPHER_MODE_ECB=1 (OFB=5)
         self.handle.gcry_cipher_open(byref(hd), int(len(key)/8+5), 1, 0)
@@ -457,9 +482,9 @@ class Crypto_GCrypt:
 
     def AE_hmac_sha1_80(p, key, s):
         "Autentica con HMAC-SHA1-80"
-        hd = c_long(0)
+        hd = c_void_p(0)
         # GCRY_MAC_HMAC_SHA1=105
-        p.handle.gcry_mac_open(byref(hd), 105, 0, 0)
+        ret = p.handle.gcry_mac_open(byref(hd), 105, 0, 0)
         p.handle.gcry_mac_setkey(hd, key, len(key))
         p.handle.gcry_mac_write(hd, s, len(s))
         digest = create_string_buffer(20)
@@ -738,7 +763,6 @@ if __name__ == '__main__':
             print('   FAILED.')
 
         print(' + AES encryption')
-        #~ print( o.AE_ctr_crypt(salt, pw) )
         try:
             # i7-6500U and Ryzen 5 1600 (hybrid): ~3 MB/s all except pycrypto
             # i7-6500U (C wrapper): GCrypt ~215 MB/s, Botan ~180 MB/s, libressl ~175 MB/s, pycrypto ~116 MB/s, NSS ~93 MB/s, openssl ~85 MB/s
