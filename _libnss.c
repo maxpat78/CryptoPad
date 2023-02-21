@@ -33,14 +33,6 @@ void betole64(uint64_t *x) {
 }
 #endif
 
-/*
-Nel modo CTR il cifrato risulta dallo XOR tra ciascun blocco di testo in chiaro
-e un contatore cifrato in modo ECB, realizzato, preferibilmente, mediante unione
-di n bit casuali con n bit di contatore.
-
-Il protocollo AE di WinZip richiede che il contatore sia un numero a 128 bit
-codificato Little Endian diversamente dalle maggiori implementazioni: esso
-parte da 1, senza alcun contenuto casuale. */
 static PyObject *
 p_AES_ctr128_le_crypt(self, args)
 PyObject *self, *args;

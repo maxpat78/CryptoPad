@@ -2,8 +2,8 @@
 
 # Encrypts in AES-256, decrypts with smaller keys, too
 
-# Based on Python x64. It requires one of the cypto toolkits/libraries:
-# pycrypto, libeay (libcrypto) from OpenSSL or LibreSSL, botan, (lib)NSS3
+# Based on Python 3 x64. It requires one of the cypto toolkits/libraries:
+# pycryptodome, libeay (libcrypto) from OpenSSL or LibreSSL, botan, (lib)NSS3
 # from Mozilla or GNU libgcrypt.
 
 """
@@ -53,7 +53,32 @@ def find_crypto(p, libs):
         return
     
 
-class Crypto_PyCryptodome:
+class Crypto_Class:
+    def __init__(p):
+        pass
+
+    def AE_gen_salt(p):
+        "Returns a 128-bits random salt for use with AES-256"
+        pass
+
+    def AE_derive_keys(p, password, salt):
+        """Given the password and the random salt, it generates the keys for
+        AES encryption and HMAC-SHA1-80 authentication, plus 2 control bytes
+        required by ZIP AE specification"""
+        pass
+
+    def AE_ctr_crypt(p, key, s):
+        """De/en-ciphers in one pass 's' with 'key', using AES-256 in CTR mode
+        with a Little-Endian 128-bit counter"""
+        pass
+
+    def AE_hmac_sha1_80(p, key, s):
+        "Authenticates 's' with HMAC-SHA1-80"
+        pass
+
+
+
+class Crypto_PyCryptodome(Crypto_Class):
     KitName = 'PyCryptodome 3.17.0+'
     
     def __init__(p):
@@ -61,12 +86,9 @@ class Crypto_PyCryptodome:
         if not p.loaded: return None
 
     def AE_gen_salt(p):
-        "Genera 128 bit casuali di salt per AES-256"
         return Random.get_random_bytes(16)
 
     def AE_derive_keys(p, password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
-       e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
         if sys.version_info >= (3,0) and type(password)!=type(b''):
             password = bytes(password, 'utf8')
@@ -74,19 +96,17 @@ class Crypto_PyCryptodome:
         return s[:keylen], s[keylen:2*keylen], s[2*keylen:]
 
     def AE_ctr_crypt(p, key, s):
-        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
         enc = AES.new(key, AES.MODE_CTR, counter=Counter.new(128, little_endian=True))
         return enc.encrypt(s)
 
     def AE_hmac_sha1_80(p, key, s):
-        "Autentica con HMAC-SHA1-80"
         hmac = HMAC.new(key, digestmod=SHA)
         hmac.update(s)
         return hmac.digest()[:10]
 
 
 
-class Crypto_OpenSSL:
+class Crypto_OpenSSL(Crypto_Class):
     KitName = 'OpenSSL 1.0.2+/LibreSSL'
     
     def __init__(p):
@@ -100,25 +120,19 @@ class Crypto_OpenSSL:
             x.HMAC.restype = c_void_p
             x.EVP_sha1.restype = c_void_p
 
-        # Se presente, sostituisce con la versione C
+        # Replaces with the C implementation, if available
         try:
             import _libeay
             p.AES_ctr128_le_crypt = _libeay.AES_ctr128_le_crypt
         except:
             pass
 
-    # Nel modo CTR il cifrato risulta dallo XOR tra ciascun blocco di testo
-    # in chiaro e un contatore cifrato in modo ECB realizzato,
-    # preferibilmente, mediante unione di n bit casuali con n bit di contatore.
-    # Il protocollo AE di WinZip richiede che il contatore sia un numero a
-    # 128 bit codificato in Little Endian diversamente dalle maggiori
-    # implementazioni in Big Endian; inoltre il contatore parte da 1 senza
-    # alcun contenuto casuale.
-    #
-    # NOTA: la versione C è veloce quanto quella pycrypto; questa, ibrida,
-    # circa 35 volte più lenta!
-    #
-    # !!!CAVE!!! Su Python 3.4 è circa 1,6x più lenta rispetto a Python 2.7!
+    """ In the WinZip AE CTR mode, each block is the XOR between the plain
+    text and a 128 bit Little-Endian counter crypted in ECB mode (it starts
+    from 1 and there are no random bits in the high QWORD).
+    C implementation is as fast as pycryptodome, while this hybrid one is at
+    least 35x slower due to ctypes calls/conversions.
+    Also Python 3.4 was 1.6x slower than 2.7! """
     def AES_ctr128_le_crypt(p, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
         AES_KEY = create_string_buffer(244)
@@ -145,7 +159,6 @@ class Crypto_OpenSSL:
             return str(bytearray(buf))
 
     def AE_gen_salt(p):
-        "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
         p.handle.RAND_poll()
         if not p.handle.RAND_bytes(key, 16):
@@ -153,8 +166,6 @@ class Crypto_OpenSSL:
         return key.raw
 
     def AE_derive_keys(p, password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
-        e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
         if sys.version_info >= (3,0) and type(password)!=type(b''):
             password = bytes(password, 'utf8')
@@ -163,17 +174,15 @@ class Crypto_OpenSSL:
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(p, key, s):
-        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
         return p.AES_ctr128_le_crypt(key, s)
 
     def AE_hmac_sha1_80(p, key, s):
-        "Autentica con HMAC-SHA1-80"
         digest = p.handle.HMAC(p.handle.EVP_sha1(), key, len(key), s, len(s), 0, 0)
         return cast(digest, POINTER(c_char*10)).contents.raw
 
 
 
-class Crypto_Botan:
+class Crypto_Botan(Crypto_Class):
     KitName = 'Botan 2.19.3+'
     
     def __init__(p):
@@ -214,7 +223,6 @@ class Crypto_Botan:
             return str(bytearray(buf))
 
     def AE_gen_salt(p):
-        "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
         rng = c_void_p(0)
         p.handle.botan_rng_init(byref(rng), b'system')
@@ -222,8 +230,6 @@ class Crypto_Botan:
         return key.raw
 
     def AE_derive_keys(p, password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
-        e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
         if sys.version_info >= (3,0) and type(password)!=type(b''):
             password = bytes(password, 'utf8')
@@ -232,11 +238,9 @@ class Crypto_Botan:
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(p, key, s):
-        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
         return p.AES_ctr128_le_crypt(key, s)
 
     def AE_hmac_sha1_80(p, key, s):
-        "Autentica con HMAC-SHA1-80"
         digest = create_string_buffer(20)
         mac = c_void_p(0)
         p.handle.botan_mac_init(byref(mac), b'HMAC(SHA-1)', 0)
@@ -260,12 +264,12 @@ class Crypto_NSS:
         p.loaded = 0
         try:
             p.handle.NSS_NoDB_Init(".")
-            # Servono almeno le DLL nss3, softokn3, freebl3, mozglue
+            # At least nss3, softokn3, freebl3, mozglue DLLs are required
             if not p.handle.NSS_IsInitialized():
                 raise Exception("NSS3 INITIALIZATION FAILED")
             p.loaded = 1
         except:
-            return
+            pass
 
         try:
             import _libnss
@@ -303,8 +307,7 @@ class Crypto_NSS:
         
         ki = self.SECItemStr()
         ki.SECItemType = 0 # type siBuffer
-        # Esiste un modo migliore? Purtroppo .data non può essere c_char_p
-        # in quanto troncherebbe al primo NULL
+        # .data can't be c_char_p since it truncates at first NULL
         ki.data = (c_char*len(key)).from_buffer_copy(key)
         ki.len = len(key)
         
@@ -339,14 +342,11 @@ class Crypto_NSS:
             return str(bytearray(buf))
 
     def AE_gen_salt(p):
-        "Genera 128 bit casuali di salt per AES-256"
         key = create_string_buffer(16)
         p.handle.PK11_GenerateRandom(key, 16)
         return key.raw
 
     def AE_derive_keys(p, password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
-      e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
         if sys.version_info >= (3,0) and type(password)!=type(b''):
             password = bytes(password, 'utf8')
@@ -378,11 +378,9 @@ class Crypto_NSS:
         return a, b, c
 
     def AE_ctr_crypt(p, key, s):
-        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
         return p.AES_ctr128_le_crypt(key, s)
 
     def AE_hmac_sha1_80(p, key, s):
-        "Autentica con HMAC-SHA1-80"
         ki = p.SECItemStr()
         ki.SECItemType = 0 # type siBuffer
         ki.data = (c_char*len(key)).from_buffer_copy(key)
@@ -411,7 +409,7 @@ class Crypto_NSS:
 
 
 
-class Crypto_GCrypt:
+class Crypto_GCrypt(Crypto_Class):
     KitName = 'GNU libgcrypt'
     
     def __init__(p):
@@ -427,6 +425,7 @@ class Crypto_GCrypt:
         if p.handle:
             x = p.handle
             x.gcry_random_bytes.restype = c_void_p
+            x.gcry_mac_setkey.argtypes = [c_void_p, c_void_p, c_size_t]
 
     def AES_ctr128_le_crypt(self, key, s):
         if len(key) not in (16,24,32): raise Exception("BAD AES KEY LENGTH")
@@ -460,14 +459,11 @@ class Crypto_GCrypt:
             return str(bytearray(buf))
 
     def AE_gen_salt(p):
-        "Genera 128 bit casuali di salt per AES-256"
         # GCRY_STRONG_RANDOM=1
         key = (c_char*16).from_address(p.handle.gcry_random_bytes(16, 1))
         return key.raw
 
     def AE_derive_keys(p, password, salt):
-        "Con la password ZIP e il salt casuale, genera le chiavi per AES \
-      e HMAC-SHA1-80, e i 16 bit di controllo"
         keylen = {8:16,12:24,16:32}[len(salt)]
         if sys.version_info >= (3,0) and type(password)!=type(b''):
             password = bytes(password, 'utf8')
@@ -477,11 +473,9 @@ class Crypto_GCrypt:
         return s.raw[:keylen], s.raw[keylen:2*keylen], s.raw[2*keylen:]
 
     def AE_ctr_crypt(p, key, s):
-        "Cifra/decifra in AES-256 CTR con contatore Little Endian"
         return p.AES_ctr128_le_crypt(key, s)
 
     def AE_hmac_sha1_80(p, key, s):
-        "Autentica con HMAC-SHA1-80"
         hd = c_void_p(0)
         # GCRY_MAC_HMAC_SHA1=105
         ret = p.handle.gcry_mac_open(byref(hd), 105, 0, 0)
@@ -585,30 +579,30 @@ if crypto_kit == None or not crypto_kit.loaded:
 
 class MiniZipAE1Writer():
     def __init__ (p, stream, password):
-        # Stream di output sul file ZIP
+        # Output stream to ZIP archive
         p.fp = stream
-        # Avvia il compressore Deflate "raw" tramite zlib
+        # Starts zlib "raw" Deflate compressor
         p.compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
         p.salt = crypto_kit.AE_gen_salt()
         p.aes_key, p.hmac_key, p.chkword = crypto_kit.AE_derive_keys(password, p.salt)
         
     def append(p, entry, s):
-        # Nome del file da aggiungere
+        # Adds a file name
         if sys.version_info >= (3,0):
             p.entry = bytes(entry, 'utf8')
         else:
             p.entry = entry
-        s = s[::-1] # inverte la stringa
-        # Calcola il CRC-32 sui dati originali
+        s = s[::-1] # inverts text buffer (V2 document format)
+        # CRC-32 of the plain text (AE-1)
         p.crc32 = zlib.crc32(s) & 0xFFFFFFFF
-        # Comprime, cifra e calcola l'hash sul cifrato
+        # Compresses, encrypts and gets the HMAC of the encrypted data
         cs = p.compressor.compress(s) + p.compressor.flush()
         # csize = salt (16) + chkword (2) + len(s) + HMAC (10)
         p.usize, p.csize = len(s), len(cs)+28
         p.blob = crypto_kit.AE_ctr_crypt(p.aes_key, cs)
 
     def write(p):
-        p.zipcomment = 'R' # indica il formato V2
+        p.zipcomment = 'R' # denotes V2 document format
         p.fp.write(p.PK0304())
         p.fp.write(p.salt)
         p.fp.write(p.chkword)
@@ -630,8 +624,8 @@ class MiniZipAE1Writer():
         return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, 0, 33, p.crc32, p.csize, p.usize, 4, 11) + b'data' + p.AEH()
 
     def AEH(p, method=8, version=1):
-        # version=2 (AE-2) non registra il CRC-32, AE-1 lo fa
-        # method=0 (non compresso), method=8 (deflated)
+        # version=2 (AE-2) does not store CRC-32
+        # method=0 (stored), method=8 (deflated)
         return struct.pack('<4HBH', 0x9901, 7, version, 0x4541, 3, method)
 
     def PK0102(p):
@@ -649,9 +643,7 @@ class MiniZipAE1Writer():
 class MiniZipAE1Reader():
     def __init__ (p, stream, password):
         p.is_v2 = False
-        # Stream di input sul file ZIP
         p.fp = stream
-        # Avvia il decompressore Deflate via zlib
         p.decompressor = zlib.decompressobj(-15)
         p.parse()
         aes_key, hmac_key, chkword = crypto_kit.AE_derive_keys(password, p.salt)
@@ -731,15 +723,16 @@ if __name__ == '__main__':
     pw = b'password'
 
     for C in (Crypto_Botan, Crypto_PyCryptodome, Crypto_NSS, Crypto_OpenSSL, Crypto_GCrypt):
+        o = C
         try:
-            o = C()
+            o = o()
             if o.loaded:
                 print('Testing', o.KitName)
             else:
                 print(o.KitName, 'not available.')
                 continue
         except:
-            print(o.KitName, 'raised en exception!')
+            print(o.KitName, 'not available.')
             continue
 
         print(' + random salt generation',)
