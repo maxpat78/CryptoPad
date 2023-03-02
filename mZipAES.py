@@ -653,9 +653,10 @@ class MiniZipAE1Reader():
             raise Exception("BAD HMAC-SHA1-80")
         cs = crypto_kit.AE_ctr_crypt(aes_key, p.blob)
         p.s = p.decompressor.decompress(cs)
-        crc32 = zlib.crc32(p.s) & 0xFFFFFFFF
-        if crc32 != p.crc32:
-            raise Exception("BAD CRC-32")
+        if p.AEv1:
+            crc32 = zlib.crc32(p.s) & 0xFFFFFFFF
+            if crc32 != p.crc32:
+                raise Exception("BAD CRC-32")
         if p.is_v2:
             p.s = p.s[::-1]
             
@@ -673,14 +674,14 @@ class MiniZipAE1Reader():
         if p.fp.read(4) != b'PK\x03\x04':
             raise Exception("BAD LOCAL HEADER")
         ver1, flag, method, dtime, ddate, crc32, csize, usize, namelen, xhlen = struct.unpack('<5H3I2H', p.fp.read(26))
-        #~ print ver1, flag, method, hex(dtime), hex(ddate), hex(crc32), csize, usize, namelen, xhlen
+        #~ print (ver1, flag, method, hex(dtime), hex(ddate), hex(crc32), csize, usize, namelen, xhlen)
         if method != 99:
             raise Exception("NOT AES ENCRYPTED")
         if xhlen != 11:
             raise Exception("TOO MANY EXT HEADERS")
         p.entry = p.fp.read(namelen)
         xh, cb, ver, vendor, keybits, method = struct.unpack('<4HBH', p.fp.read(xhlen))
-        if xh != 0x9901 or ver != 1 or vendor != 0x4541:
+        if xh != 0x9901 or ver not in (1,2) or vendor != 0x4541:
             raise Exception("UNKNOWN AE PROTOCOL")
         if keybits == 3:
             p.salt = p.fp.read(16)
@@ -698,6 +699,7 @@ class MiniZipAE1Reader():
         p.digest = p.fp.read(10)
         p.usize = usize
         p.crc32 = crc32
+        p.AEv1 = (ver == 1)
         p.fp.seek(-1, 2)
         if p.fp.read(1) == b'R':
             p.is_v2 = True
@@ -751,7 +753,7 @@ if __name__ == '__main__':
         try:
             assert o.AE_hmac_sha1_80(salt, pw) == b'j|\xB9\xA9\xEE3#\x00|\x17'
             T = timeit.timeit('o.AE_hmac_sha1_80(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
-            print('   AE_hmac_sha1_80 performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
+            print('   AE_hmac_sha1_80 performed @%.3f KiB/s on a 16 MiB block' % ((16<<20)/1024.0/T))
         except:
             print('   FAILED.')
 
@@ -762,7 +764,7 @@ if __name__ == '__main__':
             # Ryzen 5 1600 (C wrapper): pycryptodome ~968 MB/s, botan ~380 MB/s, libressl ~230 MB/s
             assert o.AE_ctr_crypt(salt, pw) == b'\x8A\x8Ar\xFB\xFAA\xE0\xCA'
             T = timeit.timeit('o.AE_ctr_crypt(salt, (16<<20)*b"x")', setup='from __main__ import o, salt', number=1)
-            print('   AE_ctr_crypt performed @%.3f KiB/s on 16 MiB block' % ((16<<20)/1024.0/T))
+            print('   AE_ctr_crypt performed @%.3f KiB/s on a 16 MiB block' % ((16<<20)/1024.0/T))
         except:
             print('   FAILED.')
 
