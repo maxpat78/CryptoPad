@@ -26,7 +26,7 @@ import sys, re, os
 from tkinter import *
 from tkinter import scrolledtext, filedialog, messagebox, simpledialog
 
-from mZipAES import MiniZipAE1Writer, MiniZipAE1Reader
+from mZipAES import MiniZipAEWriter, MiniZipAEReader
 
 
 
@@ -223,7 +223,7 @@ class CryptoPad(Tk):
                 if not p.password:
                     p.password = simpledialog.askstring("Passphrase", s_AskPassword+s_Password, show='*')
                 try:
-                    zip = MiniZipAE1Reader(stream, p.password)
+                    zip = MiniZipAEReader(stream, p.password)
                     p.is_crypted = True
                 except:
                     messagebox.showerror(s_Error, s_ErrorUnzipMsg)
@@ -278,7 +278,7 @@ class CryptoPad(Tk):
         with open(p.target_txt+'.tmp', 'wb') as stream:
             if p.is_crypted:
                 try:
-                    zip = MiniZipAE1Writer(stream, p.password)
+                    zip = MiniZipAEWriter(stream, p.password)
                     zip.append('data', s)
                     zip.write()
                     # Cerca di sostituire l'originale solo in assenza di errori

@@ -53,6 +53,7 @@ def find_crypto(p, libs):
         return
     
 
+
 class Crypto_Class:
     def __init__(p):
         pass
@@ -520,7 +521,8 @@ Extended AES header (both local & central) based on WinZip 9 specs:
     AES encrypted data (CTR mode, little endian counter)
     10-byte authentication code for encrypted data from HMAC-SHA1
 
-NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero.
+NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero and
+is adopted for compressed data <20 bytes.
 
   Central File header:
 
@@ -577,7 +579,7 @@ if crypto_kit == None or not crypto_kit.loaded:
     raise Exception("NO CRYPTO KIT FOUND - ABORTED!")
 
 
-class MiniZipAE1Writer():
+class MiniZipAEWriter():
     def __init__ (p, stream, password):
         # Output stream to ZIP archive
         p.fp = stream
@@ -585,6 +587,8 @@ class MiniZipAE1Writer():
         p.compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
         p.salt = crypto_kit.AE_gen_salt()
         p.aes_key, p.hmac_key, p.chkword = crypto_kit.AE_derive_keys(password, p.salt)
+        p.AEv = 1 # AE revision
+        p.crc = 0
         
     def append(p, entry, s):
         # Adds a file name
@@ -593,10 +597,12 @@ class MiniZipAE1Writer():
         else:
             p.entry = entry
         s = s[::-1] # inverts text buffer (V2 document format)
-        # CRC-32 of the plain text (AE-1)
-        p.crc32 = zlib.crc32(s) & 0xFFFFFFFF
         # Compresses, encrypts and gets the HMAC of the encrypted data
         cs = p.compressor.compress(s) + p.compressor.flush()
+        if len(cs) < 20:
+            p.AEv = 2 # AE-2 does not store CRC-32
+        else:
+            p.crc = zlib.crc32(s) & 0xFFFFFFFF
         # csize = salt (16) + chkword (2) + len(s) + HMAC (10)
         p.usize, p.csize = len(s), len(cs)+28
         p.blob = crypto_kit.AE_ctr_crypt(p.aes_key, cs)
@@ -621,15 +627,14 @@ class MiniZipAE1Writer():
         p.fp.seek(0, 0)
         
     def PK0304(p):
-        return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, 0, 33, p.crc32, p.csize, p.usize, 4, 11) + b'data' + p.AEH()
+        return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, 0, 33, p.crc, p.csize, p.usize, 4, 11) + b'data' + p.AEH()
 
-    def AEH(p, method=8, version=1):
-        # version=2 (AE-2) does not store CRC-32
+    def AEH(p, method=8):
         # method=0 (stored), method=8 (deflated)
-        return struct.pack('<4HBH', 0x9901, 7, version, 0x4541, 3, method)
+        return struct.pack('<4HBH', 0x9901, 7, p.AEv, 0x4541, 3, method)
 
     def PK0102(p):
-        return b'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, 0, 33, p.crc32, p.csize, p.usize, 4, 11, 0, 0, 0, 0x20, 0) + b'data' + p.AEH()
+        return b'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, 0, 33, p.crc, p.csize, p.usize, 4, 11, 0, 0, 0, 0x20, 0) + b'data' + p.AEH()
 
     def PK0506(p, cdirsize, offs):
         if hasattr(p, 'zipcomment'):
@@ -640,11 +645,10 @@ class MiniZipAE1Writer():
             return b'PK\x05\x06' + struct.pack('<4H2IH', 0, 0, 1, 1, cdirsize, offs, 0)
 
 
-class MiniZipAE1Reader():
+class MiniZipAEReader():
     def __init__ (p, stream, password):
         p.is_v2 = False
         p.fp = stream
-        p.decompressor = zlib.decompressobj(-15)
         p.parse()
         aes_key, hmac_key, chkword = crypto_kit.AE_derive_keys(password, p.salt)
         if p.chkword != chkword:
@@ -652,10 +656,13 @@ class MiniZipAE1Reader():
         if p.digest != crypto_kit.AE_hmac_sha1_80(hmac_key, p.blob):
             raise Exception("BAD HMAC-SHA1-80")
         cs = crypto_kit.AE_ctr_crypt(aes_key, p.blob)
-        p.s = p.decompressor.decompress(cs)
-        if p.AEv1:
-            crc32 = zlib.crc32(p.s) & 0xFFFFFFFF
-            if crc32 != p.crc32:
+        if p.method == 0:
+            p.s = cs
+        else:
+            p.s = zlib.decompressobj(-15).decompress(cs)
+        if p.AEv == 1:
+            crc = zlib.crc32(p.s) & 0xFFFFFFFF
+            if crc != p.crc:
                 raise Exception("BAD CRC-32")
         if p.is_v2:
             p.s = p.s[::-1]
@@ -673,7 +680,7 @@ class MiniZipAE1Reader():
         p.rewind()
         if p.fp.read(4) != b'PK\x03\x04':
             raise Exception("BAD LOCAL HEADER")
-        ver1, flag, method, dtime, ddate, crc32, csize, usize, namelen, xhlen = struct.unpack('<5H3I2H', p.fp.read(26))
+        ver1, flag, method, dtime, ddate, crc, csize, usize, namelen, xhlen = struct.unpack('<5H3I2H', p.fp.read(26))
         #~ print (ver1, flag, method, hex(dtime), hex(ddate), hex(crc32), csize, usize, namelen, xhlen)
         if method != 99:
             raise Exception("NOT AES ENCRYPTED")
@@ -698,8 +705,9 @@ class MiniZipAE1Reader():
         p.blob = p.fp.read(csize-DELTA)
         p.digest = p.fp.read(10)
         p.usize = usize
-        p.crc32 = crc32
-        p.AEv1 = (ver == 1)
+        p.crc = crc
+        p.AEv = ver
+        p.method = method # real method stored in AE header
         p.fp.seek(-1, 2)
         if p.fp.read(1) == b'R':
             p.is_v2 = True
@@ -711,14 +719,14 @@ if __name__ == '__main__':
     
     f = io.BytesIO()
     print('Testing MiniZipAE1Writer')
-    zip = MiniZipAE1Writer(f, 'password')
+    zip = MiniZipAEWriter(f, 'password')
     zip.append('a.txt', 2155*b'CIAO')
     zip.write()
     
     f.seek(0,0)
 
     print('Testing MiniZipAE1Reader')
-    zip = MiniZipAE1Reader(f, 'password')
+    zip = MiniZipAEReader(f, 'password')
     assert 2155*b'CIAO' == zip.get()
 
     salt = b'\x01' + b'\x00'*15
