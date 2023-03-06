@@ -506,14 +506,14 @@ class Crypto_GCrypt(Crypto_Class):
     filename (variable size)
     extra field (variable size)
 
-Extended AES header (both local & central) based on WinZip 9 specs:
+Extended AES header (both local & central) based on WinZip specs:
 
     extra field header      2 bytes  (0x9901)
-    size                    2 bytes  (7)
+    size                    2 bytes  (actually, 7)
     version                 2 bytes  (1 or 2)
     ZIP vendor              2 bytes  (actually, AE)
-    strength                1 byte   (AES 1=128-bit key, 2=192, 3=256)
-    actual compression      2 byte   (becomes 0x99 in LENT & CENT)
+    strength                1 byte   (AES key bits: 1=128, 2=192, 3=256)
+    actual compression      2 byte   (becomes 0x63 in LENT & CENT)
 
     content data, as follows:
     random salt (8, 12 or 16 byte depending on key size)
@@ -522,7 +522,7 @@ Extended AES header (both local & central) based on WinZip 9 specs:
     10-byte authentication code for encrypted data from HMAC-SHA1
 
 NOTE: AE-1 preserves CRC-32 on uncompressed data, AE-2 sets it to zero and
-is adopted for compressed data <20 bytes.
+is used for plain data <20 bytes.
 
   Central File header:
 
@@ -599,7 +599,7 @@ class MiniZipAEWriter():
         s = s[::-1] # inverts text buffer (V2 document format)
         # Compresses, encrypts and gets the HMAC of the encrypted data
         cs = p.compressor.compress(s) + p.compressor.flush()
-        if len(cs) < 20:
+        if len(s) < 20:
             p.AEv = 2 # AE-2 does not store CRC-32
         else:
             p.crc = zlib.crc32(s) & 0xFFFFFFFF
