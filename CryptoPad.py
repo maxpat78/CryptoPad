@@ -1,5 +1,5 @@
 """
-   CryptoPad 0.7 - A simple Tkinter encrypting Notepad
+   CryptoPad 0.8 - A simple Tkinter encrypting Notepad
    
    Supports ASCII and UTF-(8|16) encoded text and universal line endings.
    Supports special document format (ZIP archive encrypted with AES-256).
@@ -31,7 +31,7 @@ from mZipAES import MiniZipAEWriter, MiniZipAEReader
 
 
 s_Document = 'CryptoPad Document'
-VERSION = '0.7'
+VERSION = '0.8'
 
 
 

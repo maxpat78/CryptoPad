@@ -111,7 +111,7 @@ class Crypto_OpenSSL(Crypto_Class):
     KitName = 'OpenSSL 1.0.2+/LibreSSL'
     
     def __init__(p):
-        libs = ['libcrypto.so', 'libcrypto.so.1.0.0', 'libcrypto-1_1', 'crypto-50']
+        libs = ['libcrypto-3-x64', 'libcrypto.so', 'libcrypto.so.1.0.0', 'libcrypto-1_1', 'crypto-50']
         find_crypto(p, libs)
 
         if p.handle:
@@ -720,14 +720,14 @@ if __name__ == '__main__':
     import io, timeit
     
     f = io.BytesIO()
-    print('Testing MiniZipAE1Writer')
+    print('Testing MiniZipAEWriter')
     zip = MiniZipAEWriter(f, 'password')
     zip.append('a.txt', 2155*b'CIAO')
     zip.write()
     
     f.seek(0,0)
 
-    print('Testing MiniZipAE1Reader')
+    print('Testing MiniZipAEReader')
     zip = MiniZipAEReader(f, 'password')
     assert 2155*b'CIAO' == zip.get()
 
@@ -739,7 +739,7 @@ if __name__ == '__main__':
         try:
             o = o()
             if o.loaded:
-                print('Testing', o.KitName)
+                print('Testing %s with %s' % (o.KitName, o.handle))
             else:
                 print(o.KitName, 'not available.')
                 continue
