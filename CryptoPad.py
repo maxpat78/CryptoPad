@@ -229,6 +229,8 @@ class CryptoPad(Tk):
                     messagebox.showerror(s_Error, s_ErrorUnzipMsg)
                     return
                 s = zip.get()
+                if zip.is_v2:
+                    s = s[::-1]
             else:
                 s = stream.read()
         if not s: return
@@ -279,7 +281,7 @@ class CryptoPad(Tk):
             if p.is_crypted:
                 try:
                     zip = MiniZipAEWriter(stream, p.password)
-                    zip.append('data', s)
+                    zip.append('data', s[::-1]) # inverts text buffer (V2 document format)
                     zip.write()
                     # Cerca di sostituire l'originale solo in assenza di errori
                     if os.path.exists(p.target_txt):

@@ -589,6 +589,7 @@ class MiniZipAEWriter():
         p.aes_key, p.hmac_key, p.chkword = crypto_kit.AE_derive_keys(password, p.salt)
         p.AEv = 1 # AE revision
         p.crc = 0
+        p.method = 8 # 0=Stored, 8=Deflated
         
     def append(p, entry, s):
         # Adds a file name
@@ -596,7 +597,6 @@ class MiniZipAEWriter():
             p.entry = bytes(entry, 'utf8')
         else:
             p.entry = entry
-        s = s[::-1] # inverts text buffer (V2 document format)
         # Compresses, encrypts and gets the HMAC of the encrypted data
         cs = p.compressor.compress(s) + p.compressor.flush()
         if len(s) < 20:
@@ -604,7 +604,12 @@ class MiniZipAEWriter():
         else:
             p.crc = zlib.crc32(s) & 0xFFFFFFFF
         # csize = salt (16) + chkword (2) + len(s) + HMAC (10)
-        p.usize, p.csize = len(s), len(cs)+28
+        if len(cs) >= len(s):
+            cs = s
+            p.usize, p.csize = len(s), len(s)+28
+            p.method = 0
+        else:
+            p.usize, p.csize = len(s), len(cs)+28
         p.blob = crypto_kit.AE_ctr_crypt(p.aes_key, cs)
 
     def write(p):
@@ -629,9 +634,8 @@ class MiniZipAEWriter():
     def PK0304(p):
         return b'PK\x03\x04' + struct.pack('<5H3I2H', 0x33, 1, 99, 0, 33, p.crc, p.csize, p.usize, 4, 11) + b'data' + p.AEH()
 
-    def AEH(p, method=8):
-        # method=0 (stored), method=8 (deflated)
-        return struct.pack('<4HBH', 0x9901, 7, p.AEv, 0x4541, 3, method)
+    def AEH(p):
+        return struct.pack('<4HBH', 0x9901, 7, p.AEv, 0x4541, 3, p.method)
 
     def PK0102(p):
         return b'PK\x01\x02' + struct.pack('<6H3I5H2I', 0x33, 0x33, 1, 99, 0, 33, p.crc, p.csize, p.usize, 4, 11, 0, 0, 0, 0x20, 0) + b'data' + p.AEH()
@@ -664,8 +668,6 @@ class MiniZipAEReader():
             crc = zlib.crc32(p.s) & 0xFFFFFFFF
             if crc != p.crc:
                 raise Exception("BAD CRC-32")
-        if p.is_v2:
-            p.s = p.s[::-1]
             
     def get(p):
         return p.s
