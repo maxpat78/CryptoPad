@@ -84,6 +84,7 @@ class Crypto_PyCryptodome(Crypto_Class):
     
     def __init__(p):
         p.loaded = PYCRYPTOAVAILABLE
+        p.handle = '<Internal>'
         if not p.loaded: return None
 
     def AE_gen_salt(p):
